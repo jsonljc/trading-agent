@@ -78,7 +78,10 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
     reader = SocketReader(socket_path)
     logger.info("Trading agent Phase 1 ready. Listening on %s", socket_path)
-    await reader.start(handle_event)
+    try:
+        await reader.start(handle_event)
+    finally:
+        await conn.close()
 
 
 if __name__ == "__main__":
