@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+data/trading_agent.db
+data/exports/*.jsonl
+config/secrets.yaml
+.DS_Store
+bridge/.build/
