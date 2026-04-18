@@ -6,3 +6,12 @@ data/exports/*.jsonl
 config/secrets.yaml
 .DS_Store
 bridge/.build/
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+bridge/DerivedData/
+bridge/*.xcodeproj/xcuserdata/
+*.swp
+*.swo
