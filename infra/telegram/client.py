@@ -13,4 +13,9 @@ class TelegramClient:
                 f"{self._base}/sendMessage",
                 json={"chat_id": self._chat_id, "text": text, "parse_mode": "HTML"},
             )
-            resp.raise_for_status()
+            if resp.is_error:
+                raise httpx.HTTPStatusError(
+                    f"Telegram error {resp.status_code}: {resp.text}",
+                    request=resp.request,
+                    response=resp,
+                )

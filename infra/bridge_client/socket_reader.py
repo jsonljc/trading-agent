@@ -25,9 +25,10 @@ class SocketReader:
 
     async def start(self, on_event) -> None:
         """Start listening. Calls on_event(TriggerEvent) for each received event."""
-        self._server = await asyncio.start_unix_server(
-            lambda r, w: self._handle(r, w, on_event), path=self._path
-        )
+        async def _connected(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await self._handle(reader, writer, on_event)
+
+        self._server = await asyncio.start_unix_server(_connected, path=self._path)
         logger.info("Bridge socket listening at %s", self._path)
         async with self._server:
             await self._server.serve_forever()
@@ -47,3 +48,4 @@ class SocketReader:
             logger.exception("Error reading from bridge connection")
         finally:
             writer.close()
+            await writer.wait_closed()

@@ -5,8 +5,11 @@ from agent.policy import PolicyModel
 import yaml
 
 
+from pathlib import Path
+
 def make_policy():
-    raw = yaml.safe_load(open("config/policy.yaml"))
+    config_path = Path(__file__).parents[2] / "config" / "policy.yaml"
+    raw = yaml.safe_load(config_path.read_text())
     return PolicyModel.model_validate(raw)
 
 
@@ -55,3 +58,10 @@ async def test_normalizer_different_authors_produce_different_fingerprints():
     r1 = await skill.run(ctx1)
     r2 = await skill.run(ctx2)
     assert r1.updates["message_fingerprint"] != r2.updates["message_fingerprint"]
+
+
+async def test_normalizer_sets_intent_timestamp():
+    skill = MessageNormalizer(make_policy())
+    ctx = make_ctx("Long $AVEX")
+    result = await skill.run(ctx)
+    assert result.updates["intent_timestamp"] == "2026-04-18T10:00:00Z"
