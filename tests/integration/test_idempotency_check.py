@@ -49,3 +49,12 @@ async def test_different_fingerprints_both_succeed(store):
     r2 = await skill.run(make_ctx("fp2"))
     assert r1.status == "success"
     assert r2.status == "success"
+
+
+async def test_missing_fingerprint_fails(store):
+    skill = IdempotencyCheck(make_policy(), store)
+    ctx = Context(trace_id="t1", event_id="e1")
+    # No message_fingerprint set
+    result = await skill.run(ctx)
+    assert result.status == "fail"
+    assert "fingerprint" in result.reason.lower()

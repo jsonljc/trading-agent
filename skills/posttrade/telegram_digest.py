@@ -62,10 +62,11 @@ class TelegramDigest(Skill):
             logger.error("Error digest delivery failed: %s", exc)
 
     async def send_skip_digest(self, ctx: Context, reason: str) -> None:
+        import html
         text = (
             f"<b>SKIPPED</b>\n\n"
-            f"Reason: {reason}\n"
-            f"Channel: #{ctx.get('channel', '?')}\n"
+            f"Reason: {html.escape(reason)}\n"
+            f"Channel: #{html.escape(ctx.get('channel', '?'))}\n"
             f"<code>trace: {ctx.trace_id}</code>"
         )
         try:

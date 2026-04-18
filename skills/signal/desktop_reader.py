@@ -30,16 +30,12 @@ class DesktopReader(Skill):
             return False
         if any(stripped.endswith(m) for m in _TRUNCATION_MARKERS):
             return False
-        action_words = self._policy.trigger.action_words
-        lower = stripped.lower()
-        if not any(w in lower for w in action_words):
-            return False
         return True
 
     async def run(self, ctx: Context) -> SkillResult:
         preview = ctx.get("full_message_text", ctx.get("trigger_preview", ""))
         if self._is_preview_complete(preview):
-            return SkillResult(status="skip", reason="preview is complete")
+            return SkillResult(status="success")
 
         channel = ctx.get("channel", "")
         author = ctx.get("author", "")
@@ -60,9 +56,15 @@ class DesktopReader(Skill):
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             screenshot_path = f.name
-        subprocess.run(["screencapture", "-x", screenshot_path], check=True, capture_output=True)
-
-        image_data = Path(screenshot_path).read_bytes()
+        try:
+            subprocess.run(["screencapture", "-x", screenshot_path], check=True, capture_output=True)
+            image_data = Path(screenshot_path).read_bytes()
+        finally:
+            import os
+            try:
+                os.unlink(screenshot_path)
+            except OSError:
+                pass
         b64 = base64.standard_b64encode(image_data).decode()
 
         response = await self._client.messages.create(

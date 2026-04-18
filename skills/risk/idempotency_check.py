@@ -13,6 +13,8 @@ class IdempotencyCheck(Skill):
 
     async def run(self, ctx: Context) -> SkillResult:
         fingerprint = ctx.get("message_fingerprint", "")
+        if not fingerprint:
+            return SkillResult(status="fail", reason="missing message_fingerprint — normalizer did not run")
         key = f"{fingerprint}:signal_only"
 
         inserted = await self._store.insert_if_new(key, ctx.event_id, "unknown", "signal_only")

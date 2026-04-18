@@ -19,11 +19,21 @@ def make_ctx(preview: str, channel: str = "mystic", author: str = "Mystic") -> C
     return ctx
 
 
-async def test_skips_when_preview_is_complete():
+async def test_passes_through_when_preview_is_complete():
     skill = DesktopReader(make_policy())
     ctx = make_ctx("Long $AVEX today's IPO, starting a position here")
     result = await skill.run(ctx)
-    assert result.status == "skip"
+    assert result.status == "success"
+    assert not result.updates  # no updates — preview already in ctx
+
+
+async def test_triggers_capture_when_preview_short():
+    skill = DesktopReader(make_policy())
+    ctx = make_ctx("Long $AVEX")  # short, < 30 chars
+    with patch.object(skill, "_capture_full_message", new=AsyncMock(return_value="Long $AVEX full")):
+        result = await skill.run(ctx)
+    assert result.status == "success"
+    assert result.updates["capture_mode"] == "desktop_reader"
 
 
 async def test_does_not_skip_when_preview_is_truncated():

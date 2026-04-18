@@ -53,5 +53,5 @@ class TickerResolver(Skill):
 
         return SkillResult(
             status="success",
-            updates={"ticker": parsed["ticker"], "asset_type_hint": parsed.get("asset_type_hint", "equity")},
+            updates={"ticker": parsed["ticker"].upper().strip(), "asset_type_hint": parsed.get("asset_type_hint", "equity")},
         )
