@@ -1,0 +1,74 @@
+import logging
+from agent.context import Context, SkillResult
+from agent.skill import Skill
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramDigest(Skill):
+    name = "telegram_digest"
+
+    def __init__(self, client, mode: str = "signal_only") -> None:
+        self._client = client
+        self._mode = mode
+
+    async def run(self, ctx: Context) -> SkillResult:
+        try:
+            text = self._format_signal_digest(ctx)
+            await self._client.send_message(text)
+            return SkillResult(status="success")
+        except Exception as exc:
+            logger.error("telegram_digest failed: %s", exc)
+            return SkillResult(
+                status="success",
+                updates={"digest_failure": str(exc)},
+                reason=f"telegram delivery failed: {exc}",
+            )
+
+    def _format_signal_digest(self, ctx: Context) -> str:
+        import html
+        allocation_pct = ctx.get("target_allocation_pct", 0)
+        pct_display = f"{allocation_pct * 100:.0f}%"
+        message = html.escape(ctx.get("full_message_text", "?"))
+        channel = html.escape(ctx.get("channel", "?"))
+        author = html.escape(ctx.get("author", "?"))
+        ticker = html.escape(ctx.get("ticker", "unresolved"))
+        intent = html.escape(ctx.get("intent", "?"))
+        confidence = html.escape(ctx.get("confidence", "?"))
+        conviction = html.escape(ctx.get("conviction_bucket", "?"))
+        return (
+            f"<b>SIGNAL PARSED</b>\n\n"
+            f"Source: #{channel}\n"
+            f"Author: {author}\n"
+            f"Message: <i>{message}</i>\n\n"
+            f"Intent: <b>{intent}</b> ({confidence} confidence)\n"
+            f"Ticker: <b>{ticker}</b>\n"
+            f"Conviction: {conviction} → {pct_display} allocation\n\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+
+    async def send_error_digest(self, ctx: Context, reason: str) -> None:
+        import html
+        text = (
+            f"<b>ERROR</b>\n\n"
+            f"Reason: {html.escape(reason)}\n"
+            f"Channel: #{html.escape(ctx.get('channel', '?'))}\n"
+            f"Preview: <i>{html.escape(ctx.get('trigger_preview', '?'))}</i>\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Error digest delivery failed: %s", exc)
+
+    async def send_skip_digest(self, ctx: Context, reason: str) -> None:
+        text = (
+            f"<b>SKIPPED</b>\n\n"
+            f"Reason: {reason}\n"
+            f"Channel: #{ctx.get('channel', '?')}\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Skip digest delivery failed: %s", exc)
