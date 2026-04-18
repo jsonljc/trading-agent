@@ -13,8 +13,8 @@ class Orchestrator:
         self._on_fail = on_fail   # async callable(ctx, reason)
 
     async def run(self, ctx: Context) -> Context:
-        await self._trace_store.start(ctx.trace_id, ctx.event_id)
         try:
+            await self._trace_store.start(ctx.trace_id, ctx.event_id)
             for skill in self._skills:
                 result: SkillResult = await skill.run(ctx)
                 await self._trace_store.record_skill(

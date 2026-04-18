@@ -93,3 +93,49 @@ async def test_unhandled_exception_marks_failed():
     await orch.run(ctx)
     assert store.finished[0][1] == "failed"
     assert "oops" in store.finished[0][2]
+
+
+async def test_on_skip_callback_fires():
+    store = FakeTraceStore()
+    received = []
+    async def on_skip(ctx, reason):
+        received.append(reason)
+    orch = Orchestrator([SkipSkill()], store, on_skip=on_skip)
+    ctx = Context(trace_id="t1", event_id="e1")
+    await orch.run(ctx)
+    assert received == ["no action"]
+
+
+async def test_unhandled_exception_fires_on_fail():
+    class CrashSkill(Skill):
+        name = "crash"
+        async def run(self, ctx):
+            raise RuntimeError("boom")
+    store = FakeTraceStore()
+    received = []
+    async def on_fail(ctx, reason):
+        received.append(reason)
+    orch = Orchestrator([CrashSkill()], store, on_fail=on_fail)
+    ctx = Context(trace_id="t1", event_id="e1")
+    await orch.run(ctx)
+    assert len(received) == 1
+    assert "boom" in received[0]
+
+
+async def test_ctx_updates_accumulate_across_skills():
+    class SkillA(Skill):
+        name = "skill_a"
+        async def run(self, ctx):
+            return SkillResult(status="success", updates={"a": 1})
+
+    class SkillB(Skill):
+        name = "skill_b"
+        async def run(self, ctx):
+            return SkillResult(status="success", updates={"b": 2})
+
+    store = FakeTraceStore()
+    orch = Orchestrator([SkillA(), SkillB()], store)
+    ctx = Context(trace_id="t1", event_id="e1")
+    await orch.run(ctx)
+    assert ctx.data["a"] == 1
+    assert ctx.data["b"] == 2

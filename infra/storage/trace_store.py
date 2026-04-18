@@ -9,7 +9,7 @@ class TraceStore:
 
     async def start(self, trace_id: str, event_id: str) -> None:
         await self._conn.execute(
-            "INSERT INTO work_traces (trace_id, event_id, status, started_at) VALUES (?, ?, 'running', ?)",
+            "INSERT OR IGNORE INTO work_traces (trace_id, event_id, status, started_at) VALUES (?, ?, 'running', ?)",
             (trace_id, event_id, datetime.now(timezone.utc).isoformat()),
         )
         await self._conn.commit()
