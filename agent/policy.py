@@ -61,7 +61,7 @@ class TelegramConfig(BaseModel):
     @field_validator("bot_token", mode="before")
     @classmethod
     def resolve_bot_token(cls, v: str) -> str:
-        return os.environ.get("TELEGRAM_BOT_TOKEN", v)
+        return os.environ.get("TELEGRAM_BOT_TOKEN") or v
 
 
 class PolicyModel(BaseModel):
