@@ -73,7 +73,7 @@ source of truth across all pipeline stages. Code enforces it; this file names it
 
 - Prefer call options for LONG_SIGNAL and ADD_SIGNAL when prefer_options=true
 - Only consider expiries >= min_expiry_days
-- Only select contracts that pass liquidity guards (min_bid, max_spread_pct)
+- Only select contracts that pass liquidity guards (e.g., min_bid, max_spread_pct, and other configured liquidity thresholds)
 - Contract ranking is deterministic; the LLM must never select the final contract directly
 - If no option passes filters → fallback to stock when fallback_to_stock_if_no_options=true
 - If option budget cannot afford one contract → fallback to stock when
@@ -131,6 +131,8 @@ source of truth across all pipeline stages. Code enforces it; this file names it
 
 After `SignalApprovalGate`, before order planning (Phase 2b). The approval message fires first (operator visibility), then execution eligibility is checked.
 
+In Phase 2a (signal-only), `MarketHoursGuard` acts as a true chain blocker: it fails the pipeline and prevents downstream execution tasks from running, while preserving operator visibility via the approval message that already fired. It is not merely an annotation — it is included now so that Phase 2b execution tasks can be inserted after it without chain restructuring.
+
 Updated Phase 2a chain:
 ```
 MessageNormalizer
@@ -141,7 +143,7 @@ ConvictionClassifier
 ParsedSignalWriter
 SignalDispositionResolver
 SignalApprovalGate        ← approval visibility first
-MarketHoursGuard          ← execution eligibility after
+MarketHoursGuard          ← execution eligibility gate; fails chain if ineligible
 ```
 
 ### Behavior
@@ -154,7 +156,7 @@ Logic:
 - **Options:** fail if outside RTH (`rth_start`–`rth_end`)
 - **Equity premarket:** pass if time >= `stock_premarket_start` and policy `stock_premarket_allowed=true`
 - **Equity afterhours:** return success with `updates={"queued": True}` if policy `stock_afterhours_queue=true`
-- **Otherwise:** fail with descriptive reason including current time and window
+- **Otherwise:** fail with reason prefixed `execution_ineligible:` including current ET time and allowed window (e.g., `execution_ineligible: option outside RTH (current ET 17:00, allowed 09:30–16:00)`)
 
 ### Files
 
@@ -223,7 +225,9 @@ if self._policy.harness.dry_run:
     return SkillResult(status="skip", reason="dry_run: approval suppressed")
 ```
 
-### Changes to `main.py` `on_fail`
+### Changes to `main.py` `on_fail` and `on_skip`
+
+Both Telegram side-effect callbacks are guarded by `dry_run`:
 
 ```python
 async def on_fail(ctx: Context, reason: str) -> None:
@@ -231,6 +235,12 @@ async def on_fail(ctx: Context, reason: str) -> None:
         logger.info("DRY RUN error digest suppressed: %s", reason)
         return
     # ... send telegram message
+
+async def on_skip(ctx: Context, reason: str) -> None:
+    if policy.harness.dry_run:
+        logger.info("DRY RUN skip digest suppressed: %s", reason)
+        return
+    # ... send telegram message (if skip digests are enabled)
 ```
 
 ### Files
