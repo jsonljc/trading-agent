@@ -2151,6 +2151,656 @@ git commit -m "feat(bridge): replace NotificationPoller with AXDiscordWatcher (d
 
 ---
 
+## Task 14: AGENT_CONTRACT.md — behavioral contract file
+
+**Prerequisite:** None. Do this first.
+
+**Files:**
+- Create: `AGENT_CONTRACT.md` (repo root)
+- Modify: `skills/signal/trade_signal_extractor.py` (system prompt header)
+- Modify: `skills/signal/ticker_resolver.py` (system prompt header)
+- Modify: `skills/signal/conviction_classifier.py` (system prompt header)
+
+- [ ] **Step 1: Create `AGENT_CONTRACT.md` at repo root**
+
+Create `/Users/jasonli/dev/trading-agent/AGENT_CONTRACT.md`:
+
+```markdown
+# Agent Contract
+
+This file defines what the agent must and must not do. It is the behavioral
+source of truth across all pipeline stages. Code enforces it; this file names it.
+
+## Outcome semantics
+
+- fail: invariant violated, unexpected/malformed/unsafe state — operator attention may be needed
+- skip: valid input but intentionally non-actionable or policy-disallowed — normal pipeline path
+- success: stage completed, downstream progression allowed
+
+## Signal intake
+
+- Must resolve signal_type and confidence before advancing past TradeSignalExtractor
+- Must resolve a non-null, non-ambiguous ticker before advancing past TickerResolver
+- Unresolved ticker → fail with reason; never continue with null ticker
+- Ambiguous ticker → fail with reason; never guess
+- Never infer ticker from vague company references; only accept high-confidence,
+  unambiguous resolver output
+- Must resolve conviction_bucket and target_allocation_pct before advancing past ConvictionClassifier
+- Unknown or unrecognized signal_type → fail with reason; never pass through
+- Missing required context field → fail; never proceed on partial context
+
+## Approval gate
+
+- LONG_SIGNAL and ADD_SIGNAL require human approval via Telegram keyboard
+- CLOSE_SIGNAL and PARTIAL_CLOSE auto-approve when auto_approve_closes=true
+- Timeout → skip; never auto-approve on timeout
+- Rejection → skip
+- Approval is an operator visibility surface; a signal may receive an approval
+  message even if it cannot execute (e.g., outside market hours)
+
+## Execution eligibility
+
+- Option execution requires RTH (09:30–16:00 ET); fail outside that window
+- Equity execution: premarket allowed from 04:00 ET if stock_premarket_allowed=true;
+  afterhours queued if stock_afterhours_queue=true; otherwise fail
+- MarketHoursGuard runs after approval, before order planning
+
+## Instrument selection
+
+- Prefer call options for LONG_SIGNAL and ADD_SIGNAL when prefer_options=true
+- Only consider expiries >= min_expiry_days
+- Only select contracts that pass liquidity guards (e.g., min_bid, max_spread_pct,
+  and other configured liquidity thresholds)
+- Contract ranking is deterministic; the LLM must never select the final contract directly
+- If no option passes filters → fallback to stock when fallback_to_stock_if_no_options=true
+- If option budget cannot afford one contract → fallback to stock when
+  fallback_to_stock_if_no_options=true
+- If stock fallback is disabled and one option contract is unaffordable → skip with reason
+- Never force an option because options are preferred when no valid contract exists
+
+## Signal upgrade
+
+- A WATCHLIST_ONLY or NO_ACTION message may be upgraded to LONG_SIGNAL
+  (conviction=low, target_allocation_pct=0.05) only when all of:
+    - ticker resolved and unambiguous
+    - message classified as bullish catalyst/news
+    - QQQ > EMA9 and EMA21; SPY > EMA9 and EMA21
+- This upgrade is a deterministic rule, not a free-form LLM decision
+- Never override CLOSE_SIGNAL, PARTIAL_CLOSE, or bearish language
+- Never upgrade an ambiguous or unresolved ticker
+- Never size above 5% on this path
+- This rule is only active when regime overlay data is available and
+  enable_regime_catalyst_upgrade=true; otherwise default remains WATCHLIST_ONLY/NO_ACTION
+- RegimeCatalystUpgrader is deferred until market-data and EMA infrastructure exist
+
+## Write actions
+
+- Never submit an order without a persisted ExecutionPlan
+- Never submit an order before OrderPolicyGuard passes
+- Never submit live orders when paper_trading_only=true
+- Never submit a duplicate execution for the same symbol/contract/disposition
+  within the active dedupe/cooldown window when policy blocks it
+- Never auto-promote from dry_run=true to live
+
+## Dry-run mode
+
+- When dry_run=true: approval messages are logged, not sent; all other
+  pipeline behavior is identical
+- dry_run=true must never be treated as equivalent to paper_trading_only=true;
+  they are separate controls
+- When dry_run=true and dry_run_auto_approve=false: approval gate returns skip
+  with reason "dry_run: approval suppressed"
+- When dry_run=true and dry_run_auto_approve=true: approval gate returns success
+  with approval_status=approved_simulated (never indistinguishable from a real approval)
+```
+
+- [ ] **Step 2: Add contract citation header to `skills/signal/trade_signal_extractor.py`**
+
+Open `skills/signal/trade_signal_extractor.py`. Change the first line of `_SYSTEM_PROMPT` from:
+
+```python
+_SYSTEM_PROMPT = """Classify a Discord trading message into one of six signal types.
+```
+
+to:
+
+```python
+_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
+
+Classify a Discord trading message into one of six signal types.
+```
+
+- [ ] **Step 3: Add contract citation header to `skills/signal/ticker_resolver.py`**
+
+Open `skills/signal/ticker_resolver.py`. Change the first line of `_SYSTEM_PROMPT` from:
+
+```python
+_SYSTEM_PROMPT = """Extract the stock ticker from a trading message.
+```
+
+to:
+
+```python
+_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
+
+Extract the stock ticker from a trading message.
+```
+
+- [ ] **Step 4: Add contract citation header to `skills/signal/conviction_classifier.py`**
+
+Open `skills/signal/conviction_classifier.py`. Change the first line of `_SYSTEM_PROMPT` from:
+
+```python
+_SYSTEM_PROMPT = """Classify trading message conviction as 'high' or 'low'.
+```
+
+to:
+
+```python
+_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
+
+Classify trading message conviction as 'high' or 'low'.
+```
+
+- [ ] **Step 5: Verify file exists and import chain still works**
+
+```bash
+cd ~/dev/trading-agent
+test -f AGENT_CONTRACT.md && echo "contract exists"
+python3 -c "from skills.signal.trade_signal_extractor import TradeSignalExtractor; print('ok')"
+python3 -c "from skills.signal.ticker_resolver import TickerResolver; print('ok')"
+python3 -c "from skills.signal.conviction_classifier import ConvictionClassifier; print('ok')"
+```
+
+Expected: all four lines print without error.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add AGENT_CONTRACT.md \
+        skills/signal/trade_signal_extractor.py \
+        skills/signal/ticker_resolver.py \
+        skills/signal/conviction_classifier.py
+git commit -m "feat(contract): add AGENT_CONTRACT.md behavioral contract + cite in LLM skill prompts"
+```
+
+---
+
+## Task 15: HarnessPolicy — dry-run flag
+
+**Prerequisite:** Task 4 (ApprovalPolicy already added to `agent/policy.py` and `config/policy.yaml`).
+
+**Files:**
+- Modify: `agent/policy.py`
+- Modify: `config/policy.yaml`
+- Modify: `skills/rollout/signal_approval_gate.py`
+- Modify: `main.py`
+- Modify: `tests/unit/test_signal_approval_gate.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+Open `tests/unit/test_signal_approval_gate.py`. Replace the `make_policy` helper with this version that accepts keyword overrides for the `harness` section, then add the two new tests at the end of the file:
+
+```python
+def make_policy(**harness_overrides) -> PolicyModel:
+    raw = yaml.safe_load((Path(__file__).parents[2] / "config" / "policy.yaml").read_text())
+    if harness_overrides:
+        raw.setdefault("harness", {}).update(harness_overrides)
+    return PolicyModel.model_validate(raw)
+```
+
+New tests to append:
+
+```python
+async def test_dry_run_suppresses_telegram_returns_skip():
+    from skills.rollout.signal_approval_gate import SignalApprovalGate
+    telegram = MagicMock()
+    telegram.send_message_with_keyboard = AsyncMock()
+    store = FakeStore()
+    policy = make_policy(dry_run=True, dry_run_auto_approve=False)
+    skill = SignalApprovalGate(policy, telegram, store)
+    result = await skill.run(make_ctx())
+    assert result.status == "skip"
+    assert "dry_run" in result.reason
+    telegram.send_message_with_keyboard.assert_not_called()
+
+
+async def test_dry_run_auto_approve_returns_approved_simulated():
+    from skills.rollout.signal_approval_gate import SignalApprovalGate
+    telegram = MagicMock()
+    telegram.send_message_with_keyboard = AsyncMock()
+    store = FakeStore()
+    policy = make_policy(dry_run=True, dry_run_auto_approve=True)
+    skill = SignalApprovalGate(policy, telegram, store)
+    result = await skill.run(make_ctx())
+    assert result.status == "success"
+    assert result.updates["approval_status"] == "approved_simulated"
+    telegram.send_message_with_keyboard.assert_not_called()
+    assert store.calls[0][1] == "approved_simulated"
+```
+
+- [ ] **Step 2: Run — expect failure**
+
+```bash
+cd ~/dev/trading-agent
+pytest tests/unit/test_signal_approval_gate.py::test_dry_run_suppresses_telegram_returns_skip \
+       tests/unit/test_signal_approval_gate.py::test_dry_run_auto_approve_returns_approved_simulated -v
+```
+
+Expected: `ValidationError` or `AttributeError` — `HarnessPolicy` does not exist yet.
+
+- [ ] **Step 3: Add `HarnessPolicy` to `agent/policy.py`**
+
+Open `agent/policy.py`. Add this class before `PolicyModel`:
+
+```python
+class HarnessPolicy(BaseModel):
+    dry_run: bool = False
+    dry_run_auto_approve: bool = False
+```
+
+Add the field to `PolicyModel` (after the `telegram` field):
+
+```python
+class PolicyModel(BaseModel):
+    trigger: TriggerPolicy
+    instrument_policy: InstrumentPolicy
+    pricing_policy: PricingPolicy
+    sizing_policy: SizingPolicy
+    market_hours: MarketHours
+    cooldown_policy: CooldownPolicy
+    dedupe_policy: DedupePolicy
+    pricing_policy_guards: PricingGuards
+    models: ModelsConfig
+    watched_channels: list[str]
+    discord_bundle_id: str
+    telegram: TelegramConfig
+    approval_policy: ApprovalPolicy = ApprovalPolicy()
+    harness: HarnessPolicy = HarnessPolicy()
+```
+
+- [ ] **Step 4: Add `harness` section to `config/policy.yaml`**
+
+Append to the end of `config/policy.yaml`:
+
+```yaml
+harness:
+  dry_run: false
+  dry_run_auto_approve: false
+```
+
+- [ ] **Step 5: Update `skills/rollout/signal_approval_gate.py` to honor dry-run**
+
+Open `skills/rollout/signal_approval_gate.py`. Replace the `run` method with:
+
+```python
+async def run(self, ctx: Context) -> SkillResult:
+    signal_id = ctx.get("parsed_signal_id", "")
+    signal_type = ctx.get("signal_type", "")
+    ap = self._policy.approval_policy
+    harness = self._policy.harness
+
+    if harness.dry_run:
+        msg = _format_approval_message(ctx)
+        logger.info("DRY RUN approval suppressed:\n%s", msg)
+        if harness.dry_run_auto_approve:
+            await self._store.update_approval(signal_id, "approved_simulated", _now(), None)
+            return SkillResult(status="success", updates={"approval_status": "approved_simulated"})
+        return SkillResult(status="skip", reason="dry_run: approval suppressed")
+
+    if ap.auto_approve_closes and signal_type in _AUTO_CLOSE_TYPES:
+        await self._store.update_approval(signal_id, "approved", _now(), None)
+        return SkillResult(status="success", updates={"approval_status": "approved"})
+
+    if not ap.approval_required:
+        await self._store.update_approval(signal_id, "approved", _now(), None)
+        return SkillResult(status="success", updates={"approval_status": "approved"})
+
+    text = _format_approval_message(ctx)
+    buttons = [[
+        {"text": "✅ Approve", "callback_data": "approved"},
+        {"text": "❌ Reject", "callback_data": "rejected"},
+    ]]
+    message_id = await self._telegram.send_message_with_keyboard(text, buttons)
+    outcome = await self._telegram.wait_for_callback(message_id, ap.approval_timeout_secs)
+
+    approved_at = _now() if outcome == "approved" else None
+    await self._store.update_approval(signal_id, outcome, approved_at, message_id)
+
+    if outcome == "approved":
+        return SkillResult(status="success", updates={"approval_status": "approved"})
+    if outcome == "rejected":
+        return SkillResult(status="skip", reason="operator rejected signal")
+    return SkillResult(
+        status="skip",
+        reason=f"approval timeout after {ap.approval_timeout_secs}s",
+    )
+```
+
+- [ ] **Step 6: Update `main.py` `on_fail` and `on_skip`**
+
+Open `main.py`. Replace the `on_fail` and `on_skip` closures inside `run()` with:
+
+```python
+async def on_fail(ctx: Context, reason: str) -> None:
+    if policy.harness.dry_run:
+        logger.info("DRY RUN error digest suppressed: %s", reason)
+        return
+    import html
+    text = (
+        f"<b>ERROR</b>\n\n"
+        f"Reason: {html.escape(reason)}\n"
+        f"Channel: #{html.escape(ctx.get('channel', '?'))}\n"
+        f"Preview: <i>{html.escape(ctx.get('trigger_preview', '?'))}</i>\n"
+        f"<code>trace: {ctx.trace_id}</code>"
+    )
+    try:
+        await telegram.send_message(text)
+    except Exception as exc:
+        logger.error("Error digest delivery failed: %s", exc)
+
+async def on_skip(ctx: Context, reason: str) -> None:
+    if policy.harness.dry_run:
+        logger.info("DRY RUN skip digest suppressed: %s", reason)
+```
+
+- [ ] **Step 7: Run the dry-run tests — expect pass**
+
+```bash
+pytest tests/unit/test_signal_approval_gate.py -v
+```
+
+Expected: all tests PASS (including the 5 pre-existing ones).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add agent/policy.py config/policy.yaml \
+        skills/rollout/signal_approval_gate.py \
+        main.py \
+        tests/unit/test_signal_approval_gate.py
+git commit -m "feat(policy): add HarnessPolicy with dry_run + dry_run_auto_approve flags"
+```
+
+---
+
+## Task 16: MarketHoursGuard skill
+
+**Prerequisite:** Task 10 (`build_phase2a_signal_chain` exists in `agent/registry.py`).
+
+**Files:**
+- Create: `skills/risk/market_hours_guard.py`
+- Create: `tests/unit/test_market_hours_guard.py`
+- Modify: `agent/registry.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/unit/test_market_hours_guard.py`:
+
+```python
+import pytest
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from pathlib import Path
+from agent.context import Context
+from agent.policy import PolicyModel
+import yaml
+
+_ET = ZoneInfo("America/New_York")
+
+
+def make_policy(**market_hours_overrides) -> PolicyModel:
+    raw = yaml.safe_load((Path(__file__).parents[2] / "config" / "policy.yaml").read_text())
+    raw["market_hours"].update(market_hours_overrides)
+    return PolicyModel.model_validate(raw)
+
+
+def make_ctx(asset_type: str = "option") -> Context:
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({"asset_type_hint": asset_type})
+    return ctx
+
+
+def at(hour: int, minute: int) -> datetime:
+    return datetime(2026, 4, 20, hour, minute, tzinfo=_ET)
+
+
+async def test_option_in_rth():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(10, 0))
+    result = await skill.run(make_ctx("option"))
+    assert result.status == "success"
+
+
+async def test_option_outside_rth():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(17, 0))
+    result = await skill.run(make_ctx("option"))
+    assert result.status == "fail"
+    assert "execution_ineligible" in result.reason
+    assert "17:00" in result.reason
+
+
+async def test_option_at_rth_open_boundary():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(9, 30))
+    result = await skill.run(make_ctx("option"))
+    assert result.status == "success"
+
+
+async def test_option_before_rth_open():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(9, 29))
+    result = await skill.run(make_ctx("option"))
+    assert result.status == "fail"
+    assert "execution_ineligible" in result.reason
+
+
+async def test_equity_premarket_allowed():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(6, 0))
+    result = await skill.run(make_ctx("equity"))
+    assert result.status == "success"
+
+
+async def test_equity_before_premarket_window():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(3, 59))
+    result = await skill.run(make_ctx("equity"))
+    assert result.status == "fail"
+    assert "execution_ineligible" in result.reason
+
+
+async def test_equity_afterhours_queue_enabled():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(make_policy(), time_fn=lambda: at(17, 0))
+    result = await skill.run(make_ctx("equity"))
+    assert result.status == "success"
+    assert result.updates.get("queued") is True
+
+
+async def test_equity_afterhours_queue_disabled():
+    from skills.risk.market_hours_guard import MarketHoursGuard
+    skill = MarketHoursGuard(
+        make_policy(stock_afterhours_queue=False),
+        time_fn=lambda: at(17, 0),
+    )
+    result = await skill.run(make_ctx("equity"))
+    assert result.status == "fail"
+    assert "execution_ineligible" in result.reason
+```
+
+- [ ] **Step 2: Run — expect failure**
+
+```bash
+cd ~/dev/trading-agent
+pytest tests/unit/test_market_hours_guard.py -v
+```
+
+Expected: `ImportError` — `market_hours_guard` module doesn't exist yet.
+
+- [ ] **Step 3: Implement `skills/risk/market_hours_guard.py`**
+
+Create `skills/risk/market_hours_guard.py`:
+
+```python
+from __future__ import annotations
+from datetime import datetime, time
+from typing import Callable
+from zoneinfo import ZoneInfo
+from agent.context import Context, SkillResult
+from agent.skill import Skill
+from agent.policy import PolicyModel
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _default_time_fn() -> datetime:
+    return datetime.now(_ET)
+
+
+def _parse_time(s: str) -> time:
+    h, m = s.split(":")
+    return time(int(h), int(m))
+
+
+class MarketHoursGuard(Skill):
+    name = "market_hours_guard"
+
+    def __init__(self, policy: PolicyModel, time_fn: Callable[[], datetime] | None = None) -> None:
+        self._policy = policy
+        self._time_fn = time_fn or _default_time_fn
+
+    async def run(self, ctx: Context) -> SkillResult:
+        asset_type = ctx.get("asset_type_hint", "equity")
+        mh = self._policy.market_hours
+        now = self._time_fn()
+        current = now.time()
+
+        rth_start = _parse_time(mh.rth_start)
+        rth_end = _parse_time(mh.rth_end)
+        in_rth = rth_start <= current < rth_end
+
+        if asset_type == "option":
+            if in_rth:
+                return SkillResult(status="success")
+            return SkillResult(
+                status="fail",
+                reason=(
+                    f"execution_ineligible: option outside RTH "
+                    f"(current ET {current.strftime('%H:%M')}, "
+                    f"allowed {mh.rth_start}–{mh.rth_end})"
+                ),
+            )
+
+        # equity
+        if in_rth:
+            return SkillResult(status="success")
+
+        premarket_start = _parse_time(mh.stock_premarket_start)
+        if premarket_start <= current < rth_start:
+            if mh.stock_premarket_allowed:
+                return SkillResult(status="success")
+            return SkillResult(
+                status="fail",
+                reason=(
+                    f"execution_ineligible: equity premarket not allowed "
+                    f"(current ET {current.strftime('%H:%M')})"
+                ),
+            )
+
+        if current >= rth_end:
+            if mh.stock_afterhours_queue:
+                return SkillResult(status="success", updates={"queued": True})
+            return SkillResult(
+                status="fail",
+                reason=(
+                    f"execution_ineligible: equity afterhours queueing disabled "
+                    f"(current ET {current.strftime('%H:%M')})"
+                ),
+            )
+
+        return SkillResult(
+            status="fail",
+            reason=(
+                f"execution_ineligible: equity market not open "
+                f"(current ET {current.strftime('%H:%M')}, "
+                f"premarket from {mh.stock_premarket_start})"
+            ),
+        )
+```
+
+- [ ] **Step 4: Run tests — expect pass**
+
+```bash
+pytest tests/unit/test_market_hours_guard.py -v
+```
+
+Expected: all 8 tests PASS.
+
+- [ ] **Step 5: Insert `MarketHoursGuard` into `build_phase2a_signal_chain` in `agent/registry.py`**
+
+Open `agent/registry.py`. Replace the `build_phase2a_signal_chain` function with:
+
+```python
+def build_phase2a_signal_chain(
+    policy,
+    idempotency_store,
+    parsed_signal_store,
+    telegram_client,
+) -> list:
+    """Phase 2a signal chain: AX capture + full lifecycle intents + ParsedTradeSignal + approval gate + market hours."""
+    from skills.signal.message_normalizer import MessageNormalizer
+    from skills.signal.trade_signal_extractor import TradeSignalExtractor
+    from skills.risk.idempotency_check import IdempotencyCheck
+    from skills.signal.ticker_resolver import TickerResolver
+    from skills.signal.conviction_classifier import ConvictionClassifier
+    from skills.domain.parsed_signal_writer import ParsedSignalWriter
+    from skills.domain.signal_disposition_resolver import SignalDispositionResolver
+    from skills.rollout.signal_approval_gate import SignalApprovalGate
+    from skills.risk.market_hours_guard import MarketHoursGuard
+
+    return [
+        MessageNormalizer(policy),
+        TradeSignalExtractor(policy),
+        IdempotencyCheck(policy, idempotency_store),
+        TickerResolver(policy),
+        ConvictionClassifier(policy),
+        ParsedSignalWriter(parsed_signal_store),
+        SignalDispositionResolver(),
+        SignalApprovalGate(policy, telegram_client, parsed_signal_store),
+        MarketHoursGuard(policy),
+    ]
+```
+
+- [ ] **Step 6: Verify import chain**
+
+```bash
+cd ~/dev/trading-agent
+python3 -c "from agent.registry import build_phase2a_signal_chain; print('ok')"
+```
+
+Expected: `ok`
+
+- [ ] **Step 7: Run full test suite — no regressions**
+
+```bash
+pytest -v
+```
+
+Expected: all tests PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add skills/risk/market_hours_guard.py \
+        tests/unit/test_market_hours_guard.py \
+        agent/registry.py
+git commit -m "feat(skills): add MarketHoursGuard — execution eligibility gate after approval"
+```
+
+---
+
 ## Phase 2a-signal Checklist
 
 Before advancing to Phase 2a-execution (Plan B):
@@ -2162,15 +2812,19 @@ Before advancing to Phase 2a-execution (Plan B):
 - [ ] Reconciliation mode catches at least one event-mode miss (test by temporarily killing the AX observer callback and confirming the 5s sweep picks it up)
 - [ ] Approval gate keyboard messages arrive within 3 seconds of signal capture
 - [ ] `CLOSE_SIGNAL` auto-approves without keyboard when `auto_approve_closes: true`
+- [ ] `AGENT_CONTRACT.md` exists at repo root and all LLM skill prompts cite it
+- [ ] `dry_run: true` in policy suppresses all Telegram sends and returns appropriate skip/simulated outcomes
+- [ ] Options signal outside RTH fails at `MarketHoursGuard` after approval message is sent
 
 ---
 
 ## Not covered here (Plan B — Phase 2a-execution)
 
 - IBKR client wrapper (`infra/ibkr/client.py`)
-- `MarketHoursGuard`, `ChainLookup`, `ContractSelector`, `LiquidityCheck`
+- `ChainLookup`, `ContractSelector`, `LiquidityCheck`
 - `OrderSizer`, `OrderPolicyGuard`, `ExecutionPlanWriter`
 - `OrderSubmitter` (ib_insync)
 - `PositionRegistryUpdater` + `positions` DB table
 - `execution_plans` DB table
 - `pyproject.toml` additions: `ib-insync`
+- `RegimeCatalystUpgrader` (deferred: requires market-data + EMA infrastructure)
