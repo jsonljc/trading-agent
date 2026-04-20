@@ -430,15 +430,20 @@ pytest tests/unit/test_policy.py::test_approval_policy_defaults -v
 
 Expected: `AttributeError: 'PolicyModel' object has no attribute 'approval_policy'`
 
-- [ ] **Step 3: Add ApprovalPolicy to `agent/policy.py`**
+- [ ] **Step 3: Add ApprovalPolicy and HarnessPolicy to `agent/policy.py`**
 
-Add the following class before `PolicyModel`, then add the field to `PolicyModel`:
+Add both classes before `PolicyModel`, then add both fields to `PolicyModel`:
 
 ```python
 class ApprovalPolicy(BaseModel):
     approval_required: bool = True
     auto_approve_closes: bool = True
     approval_timeout_secs: int = 60
+
+
+class HarnessPolicy(BaseModel):
+    dry_run: bool = False
+    dry_run_auto_approve: bool = False
 ```
 
 Add to `PolicyModel`:
@@ -456,10 +461,11 @@ class PolicyModel(BaseModel):
     watched_channels: list[str]
     discord_bundle_id: str
     telegram: TelegramConfig
-    approval_policy: ApprovalPolicy = ApprovalPolicy()  # defaults safe for existing deployments
+    approval_policy: ApprovalPolicy = ApprovalPolicy()
+    harness: HarnessPolicy = HarnessPolicy()
 ```
 
-- [ ] **Step 4: Add `approval_policy` to `config/policy.yaml`**
+- [ ] **Step 4: Add `approval_policy` and `harness` to `config/policy.yaml`**
 
 Append to the end of `config/policy.yaml`:
 
@@ -468,6 +474,10 @@ approval_policy:
   approval_required: true
   auto_approve_closes: true
   approval_timeout_secs: 60
+
+harness:
+  dry_run: false
+  dry_run_auto_approve: false
 ```
 
 - [ ] **Step 5: Run — expect pass**
@@ -1197,12 +1207,11 @@ import yaml
 from pathlib import Path
 
 
-def make_policy(**overrides) -> PolicyModel:
+def make_policy(**harness_overrides) -> PolicyModel:
     raw = yaml.safe_load((Path(__file__).parents[2] / "config" / "policy.yaml").read_text())
-    policy = PolicyModel.model_validate(raw)
-    for k, v in overrides.items():
-        setattr(policy.approval_policy, k, v)
-    return policy
+    if harness_overrides:
+        raw.setdefault("harness", {}).update(harness_overrides)
+    return PolicyModel.model_validate(raw)
 
 
 def make_ctx(signal_type: str = "LONG_SIGNAL", signal_id: str = "sig-1") -> Context:
@@ -1289,6 +1298,31 @@ async def test_approval_not_required_auto_approves():
     result = await skill.run(make_ctx())
     assert result.status == "success"
     telegram.send_message_with_keyboard.assert_not_called()
+
+
+async def test_dry_run_suppresses_telegram_returns_skip():
+    from skills.rollout.signal_approval_gate import SignalApprovalGate
+    telegram = MagicMock()
+    telegram.send_message_with_keyboard = AsyncMock()
+    store = FakeStore()
+    skill = SignalApprovalGate(make_policy(dry_run=True, dry_run_auto_approve=False), telegram, store)
+    result = await skill.run(make_ctx())
+    assert result.status == "skip"
+    assert "dry_run" in result.reason
+    telegram.send_message_with_keyboard.assert_not_called()
+
+
+async def test_dry_run_auto_approve_returns_approved_simulated():
+    from skills.rollout.signal_approval_gate import SignalApprovalGate
+    telegram = MagicMock()
+    telegram.send_message_with_keyboard = AsyncMock()
+    store = FakeStore()
+    skill = SignalApprovalGate(make_policy(dry_run=True, dry_run_auto_approve=True), telegram, store)
+    result = await skill.run(make_ctx())
+    assert result.status == "success"
+    assert result.updates["approval_status"] == "approved_simulated"
+    telegram.send_message_with_keyboard.assert_not_called()
+    assert store.calls[0][1] == "approved_simulated"
 ```
 
 - [ ] **Step 2: Run — expect failure**
@@ -1310,6 +1344,7 @@ Create `skills/rollout/signal_approval_gate.py`:
 ```python
 from __future__ import annotations
 import html as _html
+import logging
 from datetime import datetime, timezone
 from agent.context import Context, SkillResult
 from agent.skill import Skill
@@ -1317,6 +1352,7 @@ from agent.policy import PolicyModel
 from infra.storage.parsed_signal_store import ParsedSignalStore
 from infra.telegram.client import TelegramClient
 
+logger = logging.getLogger(__name__)
 _AUTO_CLOSE_TYPES = frozenset({"CLOSE_SIGNAL", "PARTIAL_CLOSE"})
 
 
@@ -1337,6 +1373,15 @@ class SignalApprovalGate(Skill):
         signal_id = ctx.get("parsed_signal_id", "")
         signal_type = ctx.get("signal_type", "")
         ap = self._policy.approval_policy
+        harness = self._policy.harness
+
+        if harness.dry_run:
+            msg = _format_approval_message(ctx)
+            logger.info("DRY RUN approval suppressed:\n%s", msg)
+            if harness.dry_run_auto_approve:
+                await self._store.update_approval(signal_id, "approved_simulated", _now(), None)
+                return SkillResult(status="success", updates={"approval_status": "approved_simulated"})
+            return SkillResult(status="skip", reason="dry_run: approval suppressed")
 
         # Auto-approve closes if policy says so
         if ap.auto_approve_closes and signal_type in _AUTO_CLOSE_TYPES:
@@ -1399,13 +1444,13 @@ def _format_approval_message(ctx: Context) -> str:
 pytest tests/unit/test_signal_approval_gate.py -v
 ```
 
-Expected: all 5 tests PASS.
+Expected: all 7 tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add skills/rollout/__init__.py skills/rollout/signal_approval_gate.py tests/unit/test_signal_approval_gate.py
-git commit -m "feat(skills): add SignalApprovalGate with Telegram inline keyboard"
+git commit -m "feat(skills): add SignalApprovalGate with Telegram inline keyboard and dry-run support"
 ```
 
 ---
@@ -1427,7 +1472,7 @@ def build_phase2a_signal_chain(
     parsed_signal_store,
     telegram_client,
 ) -> list:
-    """Phase 2a signal chain: AX capture + full lifecycle intents + ParsedTradeSignal + approval gate."""
+    """Phase 2a signal chain: AX capture + full lifecycle intents + ParsedTradeSignal + approval gate + market hours."""
     from skills.signal.message_normalizer import MessageNormalizer
     from skills.signal.trade_signal_extractor import TradeSignalExtractor
     from skills.risk.idempotency_check import IdempotencyCheck
@@ -1436,6 +1481,7 @@ def build_phase2a_signal_chain(
     from skills.domain.parsed_signal_writer import ParsedSignalWriter
     from skills.domain.signal_disposition_resolver import SignalDispositionResolver
     from skills.rollout.signal_approval_gate import SignalApprovalGate
+    from skills.risk.market_hours_guard import MarketHoursGuard
 
     return [
         MessageNormalizer(policy),
@@ -1446,6 +1492,7 @@ def build_phase2a_signal_chain(
         ParsedSignalWriter(parsed_signal_store),
         SignalDispositionResolver(),
         SignalApprovalGate(policy, telegram_client, parsed_signal_store),
+        MarketHoursGuard(policy),
     ]
 ```
 
@@ -1473,10 +1520,10 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
     chain = build_phase2a_signal_chain(policy, idempotency_store, parsed_signal_store, telegram)
 
-    # on_fail: find the approval gate (last skill in chain) for error digest
-    approval_gate = chain[-1]
-
     async def on_fail(ctx: Context, reason: str) -> None:
+        if policy.harness.dry_run:
+            logger.info("DRY RUN error digest suppressed: %s", reason)
+            return
         import html
         text = (
             f"<b>ERROR</b>\n\n"
@@ -1491,7 +1538,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
             logger.error("Error digest delivery failed: %s", exc)
 
     async def on_skip(ctx: Context, reason: str) -> None:
-        pass
+        if policy.harness.dry_run:
+            logger.info("DRY RUN skip digest suppressed: %s", reason)
 
     orch = Orchestrator(chain, trace_store, on_skip=on_skip, on_fail=on_fail)
 
@@ -2326,212 +2374,21 @@ git commit -m "feat(contract): add AGENT_CONTRACT.md behavioral contract + cite 
 
 ---
 
-## Task 15: HarnessPolicy — dry-run flag
+## Task 15: ~~HarnessPolicy — dry-run flag~~
 
-**Prerequisite:** Task 4 (ApprovalPolicy already added to `agent/policy.py` and `config/policy.yaml`).
-
-**Files:**
-- Modify: `agent/policy.py`
-- Modify: `config/policy.yaml`
-- Modify: `skills/rollout/signal_approval_gate.py`
-- Modify: `main.py`
-- Modify: `tests/unit/test_signal_approval_gate.py`
-
-- [ ] **Step 1: Write the failing tests**
-
-Open `tests/unit/test_signal_approval_gate.py`. Replace the `make_policy` helper with this version that accepts keyword overrides for the `harness` section, then add the two new tests at the end of the file:
-
-```python
-def make_policy(**harness_overrides) -> PolicyModel:
-    raw = yaml.safe_load((Path(__file__).parents[2] / "config" / "policy.yaml").read_text())
-    if harness_overrides:
-        raw.setdefault("harness", {}).update(harness_overrides)
-    return PolicyModel.model_validate(raw)
-```
-
-New tests to append:
-
-```python
-async def test_dry_run_suppresses_telegram_returns_skip():
-    from skills.rollout.signal_approval_gate import SignalApprovalGate
-    telegram = MagicMock()
-    telegram.send_message_with_keyboard = AsyncMock()
-    store = FakeStore()
-    policy = make_policy(dry_run=True, dry_run_auto_approve=False)
-    skill = SignalApprovalGate(policy, telegram, store)
-    result = await skill.run(make_ctx())
-    assert result.status == "skip"
-    assert "dry_run" in result.reason
-    telegram.send_message_with_keyboard.assert_not_called()
-
-
-async def test_dry_run_auto_approve_returns_approved_simulated():
-    from skills.rollout.signal_approval_gate import SignalApprovalGate
-    telegram = MagicMock()
-    telegram.send_message_with_keyboard = AsyncMock()
-    store = FakeStore()
-    policy = make_policy(dry_run=True, dry_run_auto_approve=True)
-    skill = SignalApprovalGate(policy, telegram, store)
-    result = await skill.run(make_ctx())
-    assert result.status == "success"
-    assert result.updates["approval_status"] == "approved_simulated"
-    telegram.send_message_with_keyboard.assert_not_called()
-    assert store.calls[0][1] == "approved_simulated"
-```
-
-- [ ] **Step 2: Run — expect failure**
-
-```bash
-cd ~/dev/trading-agent
-pytest tests/unit/test_signal_approval_gate.py::test_dry_run_suppresses_telegram_returns_skip \
-       tests/unit/test_signal_approval_gate.py::test_dry_run_auto_approve_returns_approved_simulated -v
-```
-
-Expected: `ValidationError` or `AttributeError` — `HarnessPolicy` does not exist yet.
-
-- [ ] **Step 3: Add `HarnessPolicy` to `agent/policy.py`**
-
-Open `agent/policy.py`. Add this class before `PolicyModel`:
-
-```python
-class HarnessPolicy(BaseModel):
-    dry_run: bool = False
-    dry_run_auto_approve: bool = False
-```
-
-Add the field to `PolicyModel` (after the `telegram` field):
-
-```python
-class PolicyModel(BaseModel):
-    trigger: TriggerPolicy
-    instrument_policy: InstrumentPolicy
-    pricing_policy: PricingPolicy
-    sizing_policy: SizingPolicy
-    market_hours: MarketHours
-    cooldown_policy: CooldownPolicy
-    dedupe_policy: DedupePolicy
-    pricing_policy_guards: PricingGuards
-    models: ModelsConfig
-    watched_channels: list[str]
-    discord_bundle_id: str
-    telegram: TelegramConfig
-    approval_policy: ApprovalPolicy = ApprovalPolicy()
-    harness: HarnessPolicy = HarnessPolicy()
-```
-
-- [ ] **Step 4: Add `harness` section to `config/policy.yaml`**
-
-Append to the end of `config/policy.yaml`:
-
-```yaml
-harness:
-  dry_run: false
-  dry_run_auto_approve: false
-```
-
-- [ ] **Step 5: Update `skills/rollout/signal_approval_gate.py` to honor dry-run**
-
-Open `skills/rollout/signal_approval_gate.py`. Replace the `run` method with:
-
-```python
-async def run(self, ctx: Context) -> SkillResult:
-    signal_id = ctx.get("parsed_signal_id", "")
-    signal_type = ctx.get("signal_type", "")
-    ap = self._policy.approval_policy
-    harness = self._policy.harness
-
-    if harness.dry_run:
-        msg = _format_approval_message(ctx)
-        logger.info("DRY RUN approval suppressed:\n%s", msg)
-        if harness.dry_run_auto_approve:
-            await self._store.update_approval(signal_id, "approved_simulated", _now(), None)
-            return SkillResult(status="success", updates={"approval_status": "approved_simulated"})
-        return SkillResult(status="skip", reason="dry_run: approval suppressed")
-
-    if ap.auto_approve_closes and signal_type in _AUTO_CLOSE_TYPES:
-        await self._store.update_approval(signal_id, "approved", _now(), None)
-        return SkillResult(status="success", updates={"approval_status": "approved"})
-
-    if not ap.approval_required:
-        await self._store.update_approval(signal_id, "approved", _now(), None)
-        return SkillResult(status="success", updates={"approval_status": "approved"})
-
-    text = _format_approval_message(ctx)
-    buttons = [[
-        {"text": "✅ Approve", "callback_data": "approved"},
-        {"text": "❌ Reject", "callback_data": "rejected"},
-    ]]
-    message_id = await self._telegram.send_message_with_keyboard(text, buttons)
-    outcome = await self._telegram.wait_for_callback(message_id, ap.approval_timeout_secs)
-
-    approved_at = _now() if outcome == "approved" else None
-    await self._store.update_approval(signal_id, outcome, approved_at, message_id)
-
-    if outcome == "approved":
-        return SkillResult(status="success", updates={"approval_status": "approved"})
-    if outcome == "rejected":
-        return SkillResult(status="skip", reason="operator rejected signal")
-    return SkillResult(
-        status="skip",
-        reason=f"approval timeout after {ap.approval_timeout_secs}s",
-    )
-```
-
-- [ ] **Step 6: Update `main.py` `on_fail` and `on_skip`**
-
-Open `main.py`. Replace the `on_fail` and `on_skip` closures inside `run()` with:
-
-```python
-async def on_fail(ctx: Context, reason: str) -> None:
-    if policy.harness.dry_run:
-        logger.info("DRY RUN error digest suppressed: %s", reason)
-        return
-    import html
-    text = (
-        f"<b>ERROR</b>\n\n"
-        f"Reason: {html.escape(reason)}\n"
-        f"Channel: #{html.escape(ctx.get('channel', '?'))}\n"
-        f"Preview: <i>{html.escape(ctx.get('trigger_preview', '?'))}</i>\n"
-        f"<code>trace: {ctx.trace_id}</code>"
-    )
-    try:
-        await telegram.send_message(text)
-    except Exception as exc:
-        logger.error("Error digest delivery failed: %s", exc)
-
-async def on_skip(ctx: Context, reason: str) -> None:
-    if policy.harness.dry_run:
-        logger.info("DRY RUN skip digest suppressed: %s", reason)
-```
-
-- [ ] **Step 7: Run the dry-run tests — expect pass**
-
-```bash
-pytest tests/unit/test_signal_approval_gate.py -v
-```
-
-Expected: all tests PASS (including the 5 pre-existing ones).
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add agent/policy.py config/policy.yaml \
-        skills/rollout/signal_approval_gate.py \
-        main.py \
-        tests/unit/test_signal_approval_gate.py
-git commit -m "feat(policy): add HarnessPolicy with dry_run + dry_run_auto_approve flags"
-```
+> **Note:** `HarnessPolicy`, dry-run behavior in `SignalApprovalGate`, and `on_fail`/`on_skip` dry-run guards in `main.py` are now fully implemented in Tasks 4, 9, and 10 respectively. Task 15 is superseded and requires no additional steps.
 
 ---
 
 ## Task 16: MarketHoursGuard skill
 
-**Prerequisite:** Task 10 (`build_phase2a_signal_chain` exists in `agent/registry.py`).
+**Prerequisite:** Task 10 (`build_phase2a_signal_chain` already imports and appends `MarketHoursGuard`).
 
 **Files:**
 - Create: `skills/risk/market_hours_guard.py`
 - Create: `tests/unit/test_market_hours_guard.py`
-- Modify: `agent/registry.py`
+
+> **Note:** The registry change (inserting `MarketHoursGuard` into `build_phase2a_signal_chain`) is already in Task 10 Step 1. This task only creates the skill file and its tests.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2738,42 +2595,7 @@ pytest tests/unit/test_market_hours_guard.py -v
 
 Expected: all 8 tests PASS.
 
-- [ ] **Step 5: Insert `MarketHoursGuard` into `build_phase2a_signal_chain` in `agent/registry.py`**
-
-Open `agent/registry.py`. Replace the `build_phase2a_signal_chain` function with:
-
-```python
-def build_phase2a_signal_chain(
-    policy,
-    idempotency_store,
-    parsed_signal_store,
-    telegram_client,
-) -> list:
-    """Phase 2a signal chain: AX capture + full lifecycle intents + ParsedTradeSignal + approval gate + market hours."""
-    from skills.signal.message_normalizer import MessageNormalizer
-    from skills.signal.trade_signal_extractor import TradeSignalExtractor
-    from skills.risk.idempotency_check import IdempotencyCheck
-    from skills.signal.ticker_resolver import TickerResolver
-    from skills.signal.conviction_classifier import ConvictionClassifier
-    from skills.domain.parsed_signal_writer import ParsedSignalWriter
-    from skills.domain.signal_disposition_resolver import SignalDispositionResolver
-    from skills.rollout.signal_approval_gate import SignalApprovalGate
-    from skills.risk.market_hours_guard import MarketHoursGuard
-
-    return [
-        MessageNormalizer(policy),
-        TradeSignalExtractor(policy),
-        IdempotencyCheck(policy, idempotency_store),
-        TickerResolver(policy),
-        ConvictionClassifier(policy),
-        ParsedSignalWriter(parsed_signal_store),
-        SignalDispositionResolver(),
-        SignalApprovalGate(policy, telegram_client, parsed_signal_store),
-        MarketHoursGuard(policy),
-    ]
-```
-
-- [ ] **Step 6: Verify import chain**
+- [ ] **Step 5: Verify import chain**
 
 ```bash
 cd ~/dev/trading-agent
@@ -2782,7 +2604,7 @@ python3 -c "from agent.registry import build_phase2a_signal_chain; print('ok')"
 
 Expected: `ok`
 
-- [ ] **Step 7: Run full test suite — no regressions**
+- [ ] **Step 6: Run full test suite — no regressions**
 
 ```bash
 pytest -v
@@ -2790,12 +2612,11 @@ pytest -v
 
 Expected: all tests PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add skills/risk/market_hours_guard.py \
-        tests/unit/test_market_hours_guard.py \
-        agent/registry.py
+        tests/unit/test_market_hours_guard.py
 git commit -m "feat(skills): add MarketHoursGuard — execution eligibility gate after approval"
 ```
 
