@@ -53,6 +53,181 @@
 
 ---
 
+## Task 0: AGENT_CONTRACT.md — behavioral contract file
+
+**Do this first, before any other task.**
+
+**Files:**
+- Create: `AGENT_CONTRACT.md` (repo root)
+- Modify: `skills/signal/trade_signal_extractor.py` (system prompt header)
+- Modify: `skills/signal/ticker_resolver.py` (system prompt header)
+- Modify: `skills/signal/conviction_classifier.py` (system prompt header)
+
+- [ ] **Step 1: Create `AGENT_CONTRACT.md` at repo root**
+
+Create `/Users/jasonli/dev/trading-agent/AGENT_CONTRACT.md`:
+
+```markdown
+# Agent Contract
+
+This file defines what the agent must and must not do. It is the behavioral
+source of truth across all pipeline stages. Code enforces it; this file names it.
+
+## Outcome semantics
+
+- fail: invariant violated, unexpected/malformed/unsafe state — operator attention may be needed
+- skip: valid input but intentionally non-actionable or policy-disallowed — normal pipeline path
+- success: stage completed, downstream progression allowed
+
+## Signal intake
+
+- Must resolve signal_type and confidence before advancing past TradeSignalExtractor
+- Must resolve a non-null, non-ambiguous ticker before advancing past TickerResolver
+- Unresolved ticker → fail with reason; never continue with null ticker
+- Ambiguous ticker → fail with reason; never guess
+- Never infer ticker from vague company references; only accept high-confidence,
+  unambiguous resolver output
+- Must resolve conviction_bucket and target_allocation_pct before advancing past ConvictionClassifier
+- Unknown or unrecognized signal_type → fail with reason; never pass through
+- Missing required context field → fail; never proceed on partial context
+
+## Approval gate
+
+- LONG_SIGNAL and ADD_SIGNAL require human approval via Telegram keyboard
+- CLOSE_SIGNAL and PARTIAL_CLOSE auto-approve when auto_approve_closes=true
+- Timeout → skip; never auto-approve on timeout
+- Rejection → skip
+- Approval is an operator visibility surface; a signal may receive an approval
+  message even if it cannot execute (e.g., outside market hours)
+
+## Execution eligibility
+
+- Option execution requires RTH (09:30–16:00 ET); fail outside that window
+- Equity execution: premarket allowed from 04:00 ET if stock_premarket_allowed=true;
+  afterhours queued if stock_afterhours_queue=true; otherwise fail
+- MarketHoursGuard runs after approval, before order planning
+
+## Instrument selection
+
+- Prefer call options for LONG_SIGNAL and ADD_SIGNAL when prefer_options=true
+- Only consider expiries >= min_expiry_days
+- Only select contracts that pass liquidity guards (e.g., min_bid, max_spread_pct,
+  and other configured liquidity thresholds)
+- Contract ranking is deterministic; the LLM must never select the final contract directly
+- If no option passes filters → fallback to stock when fallback_to_stock_if_no_options=true
+- If option budget cannot afford one contract → fallback to stock when
+  fallback_to_stock_if_no_options=true
+- If stock fallback is disabled and one option contract is unaffordable → skip with reason
+- Never force an option because options are preferred when no valid contract exists
+
+## Signal upgrade
+
+- A WATCHLIST_ONLY or NO_ACTION message may be upgraded to LONG_SIGNAL
+  (conviction=low, target_allocation_pct=0.05) only when all of:
+    - ticker resolved and unambiguous
+    - message classified as bullish catalyst/news
+    - QQQ > EMA9 and EMA21; SPY > EMA9 and EMA21
+- This upgrade is a deterministic rule, not a free-form LLM decision
+- Never override CLOSE_SIGNAL, PARTIAL_CLOSE, or bearish language
+- Never upgrade an ambiguous or unresolved ticker
+- Never size above 5% on this path
+- This rule is only active when regime overlay data is available and
+  enable_regime_catalyst_upgrade=true; otherwise default remains WATCHLIST_ONLY/NO_ACTION
+- RegimeCatalystUpgrader is deferred until market-data and EMA infrastructure exist
+
+## Write actions
+
+- Never submit an order without a persisted ExecutionPlan
+- Never submit an order before OrderPolicyGuard passes
+- Never submit live orders when paper_trading_only=true
+- Never submit a duplicate execution for the same symbol/contract/disposition
+  within the active dedupe/cooldown window when policy blocks it
+- Never auto-promote from dry_run=true to live
+
+## Dry-run mode
+
+- When dry_run=true: approval messages are logged, not sent; all other
+  pipeline behavior is identical
+- dry_run=true must never be treated as equivalent to paper_trading_only=true;
+  they are separate controls
+- When dry_run=true and dry_run_auto_approve=false: approval gate returns skip
+  with reason "dry_run: approval suppressed"
+- When dry_run=true and dry_run_auto_approve=true: approval gate returns success
+  with approval_status=approved_simulated (never indistinguishable from a real approval)
+```
+
+- [ ] **Step 2: Add contract citation header to `skills/signal/trade_signal_extractor.py`**
+
+Open `skills/signal/trade_signal_extractor.py`. Change the first line of `_SYSTEM_PROMPT` from:
+
+```python
+_SYSTEM_PROMPT = """Classify a Discord trading message into one of six signal types.
+```
+
+to:
+
+```python
+_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
+
+Classify a Discord trading message into one of six signal types.
+```
+
+- [ ] **Step 3: Add contract citation header to `skills/signal/ticker_resolver.py`**
+
+Open `skills/signal/ticker_resolver.py`. Change the first line of `_SYSTEM_PROMPT` from:
+
+```python
+_SYSTEM_PROMPT = """Extract the stock ticker from a trading message.
+```
+
+to:
+
+```python
+_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
+
+Extract the stock ticker from a trading message.
+```
+
+- [ ] **Step 4: Add contract citation header to `skills/signal/conviction_classifier.py`**
+
+Open `skills/signal/conviction_classifier.py`. Change the first line of `_SYSTEM_PROMPT` from:
+
+```python
+_SYSTEM_PROMPT = """Classify trading message conviction as 'high' or 'low'.
+```
+
+to:
+
+```python
+_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
+
+Classify trading message conviction as 'high' or 'low'.
+```
+
+- [ ] **Step 5: Verify file exists and import chain still works**
+
+```bash
+cd ~/dev/trading-agent
+test -f AGENT_CONTRACT.md && echo "contract exists"
+python3 -c "from skills.signal.trade_signal_extractor import TradeSignalExtractor; print('ok')"
+python3 -c "from skills.signal.ticker_resolver import TickerResolver; print('ok')"
+python3 -c "from skills.signal.conviction_classifier import ConvictionClassifier; print('ok')"
+```
+
+Expected: all four lines print without error.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add AGENT_CONTRACT.md \
+        skills/signal/trade_signal_extractor.py \
+        skills/signal/ticker_resolver.py \
+        skills/signal/conviction_classifier.py
+git commit -m "feat(contract): add AGENT_CONTRACT.md behavioral contract + cite in LLM skill prompts"
+```
+
+---
+
 ## Task 1: DB schema — add parsed_signals table
 
 **Files:**
@@ -492,7 +667,7 @@ Expected: all tests PASS.
 
 ```bash
 git add agent/policy.py config/policy.yaml tests/unit/test_policy.py
-git commit -m "feat(policy): add ApprovalPolicy"
+git commit -m "feat(policy): add ApprovalPolicy and HarnessPolicy (dry-run support)"
 ```
 
 ---
@@ -2195,181 +2370,6 @@ Check `data/ax_events.log` for logged AX callbacks.
 git add bridge/Sources/NotificationBridge/AXDiscordWatcher.swift \
         bridge/Sources/NotificationBridge/main.swift
 git commit -m "feat(bridge): replace NotificationPoller with AXDiscordWatcher (dual-mode)"
-```
-
----
-
-## Task 14: AGENT_CONTRACT.md — behavioral contract file
-
-**Prerequisite:** None. Do this first.
-
-**Files:**
-- Create: `AGENT_CONTRACT.md` (repo root)
-- Modify: `skills/signal/trade_signal_extractor.py` (system prompt header)
-- Modify: `skills/signal/ticker_resolver.py` (system prompt header)
-- Modify: `skills/signal/conviction_classifier.py` (system prompt header)
-
-- [ ] **Step 1: Create `AGENT_CONTRACT.md` at repo root**
-
-Create `/Users/jasonli/dev/trading-agent/AGENT_CONTRACT.md`:
-
-```markdown
-# Agent Contract
-
-This file defines what the agent must and must not do. It is the behavioral
-source of truth across all pipeline stages. Code enforces it; this file names it.
-
-## Outcome semantics
-
-- fail: invariant violated, unexpected/malformed/unsafe state — operator attention may be needed
-- skip: valid input but intentionally non-actionable or policy-disallowed — normal pipeline path
-- success: stage completed, downstream progression allowed
-
-## Signal intake
-
-- Must resolve signal_type and confidence before advancing past TradeSignalExtractor
-- Must resolve a non-null, non-ambiguous ticker before advancing past TickerResolver
-- Unresolved ticker → fail with reason; never continue with null ticker
-- Ambiguous ticker → fail with reason; never guess
-- Never infer ticker from vague company references; only accept high-confidence,
-  unambiguous resolver output
-- Must resolve conviction_bucket and target_allocation_pct before advancing past ConvictionClassifier
-- Unknown or unrecognized signal_type → fail with reason; never pass through
-- Missing required context field → fail; never proceed on partial context
-
-## Approval gate
-
-- LONG_SIGNAL and ADD_SIGNAL require human approval via Telegram keyboard
-- CLOSE_SIGNAL and PARTIAL_CLOSE auto-approve when auto_approve_closes=true
-- Timeout → skip; never auto-approve on timeout
-- Rejection → skip
-- Approval is an operator visibility surface; a signal may receive an approval
-  message even if it cannot execute (e.g., outside market hours)
-
-## Execution eligibility
-
-- Option execution requires RTH (09:30–16:00 ET); fail outside that window
-- Equity execution: premarket allowed from 04:00 ET if stock_premarket_allowed=true;
-  afterhours queued if stock_afterhours_queue=true; otherwise fail
-- MarketHoursGuard runs after approval, before order planning
-
-## Instrument selection
-
-- Prefer call options for LONG_SIGNAL and ADD_SIGNAL when prefer_options=true
-- Only consider expiries >= min_expiry_days
-- Only select contracts that pass liquidity guards (e.g., min_bid, max_spread_pct,
-  and other configured liquidity thresholds)
-- Contract ranking is deterministic; the LLM must never select the final contract directly
-- If no option passes filters → fallback to stock when fallback_to_stock_if_no_options=true
-- If option budget cannot afford one contract → fallback to stock when
-  fallback_to_stock_if_no_options=true
-- If stock fallback is disabled and one option contract is unaffordable → skip with reason
-- Never force an option because options are preferred when no valid contract exists
-
-## Signal upgrade
-
-- A WATCHLIST_ONLY or NO_ACTION message may be upgraded to LONG_SIGNAL
-  (conviction=low, target_allocation_pct=0.05) only when all of:
-    - ticker resolved and unambiguous
-    - message classified as bullish catalyst/news
-    - QQQ > EMA9 and EMA21; SPY > EMA9 and EMA21
-- This upgrade is a deterministic rule, not a free-form LLM decision
-- Never override CLOSE_SIGNAL, PARTIAL_CLOSE, or bearish language
-- Never upgrade an ambiguous or unresolved ticker
-- Never size above 5% on this path
-- This rule is only active when regime overlay data is available and
-  enable_regime_catalyst_upgrade=true; otherwise default remains WATCHLIST_ONLY/NO_ACTION
-- RegimeCatalystUpgrader is deferred until market-data and EMA infrastructure exist
-
-## Write actions
-
-- Never submit an order without a persisted ExecutionPlan
-- Never submit an order before OrderPolicyGuard passes
-- Never submit live orders when paper_trading_only=true
-- Never submit a duplicate execution for the same symbol/contract/disposition
-  within the active dedupe/cooldown window when policy blocks it
-- Never auto-promote from dry_run=true to live
-
-## Dry-run mode
-
-- When dry_run=true: approval messages are logged, not sent; all other
-  pipeline behavior is identical
-- dry_run=true must never be treated as equivalent to paper_trading_only=true;
-  they are separate controls
-- When dry_run=true and dry_run_auto_approve=false: approval gate returns skip
-  with reason "dry_run: approval suppressed"
-- When dry_run=true and dry_run_auto_approve=true: approval gate returns success
-  with approval_status=approved_simulated (never indistinguishable from a real approval)
-```
-
-- [ ] **Step 2: Add contract citation header to `skills/signal/trade_signal_extractor.py`**
-
-Open `skills/signal/trade_signal_extractor.py`. Change the first line of `_SYSTEM_PROMPT` from:
-
-```python
-_SYSTEM_PROMPT = """Classify a Discord trading message into one of six signal types.
-```
-
-to:
-
-```python
-_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
-
-Classify a Discord trading message into one of six signal types.
-```
-
-- [ ] **Step 3: Add contract citation header to `skills/signal/ticker_resolver.py`**
-
-Open `skills/signal/ticker_resolver.py`. Change the first line of `_SYSTEM_PROMPT` from:
-
-```python
-_SYSTEM_PROMPT = """Extract the stock ticker from a trading message.
-```
-
-to:
-
-```python
-_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
-
-Extract the stock ticker from a trading message.
-```
-
-- [ ] **Step 4: Add contract citation header to `skills/signal/conviction_classifier.py`**
-
-Open `skills/signal/conviction_classifier.py`. Change the first line of `_SYSTEM_PROMPT` from:
-
-```python
-_SYSTEM_PROMPT = """Classify trading message conviction as 'high' or 'low'.
-```
-
-to:
-
-```python
-_SYSTEM_PROMPT = """Rules: see AGENT_CONTRACT.md in repo root.
-
-Classify trading message conviction as 'high' or 'low'.
-```
-
-- [ ] **Step 5: Verify file exists and import chain still works**
-
-```bash
-cd ~/dev/trading-agent
-test -f AGENT_CONTRACT.md && echo "contract exists"
-python3 -c "from skills.signal.trade_signal_extractor import TradeSignalExtractor; print('ok')"
-python3 -c "from skills.signal.ticker_resolver import TickerResolver; print('ok')"
-python3 -c "from skills.signal.conviction_classifier import ConvictionClassifier; print('ok')"
-```
-
-Expected: all four lines print without error.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add AGENT_CONTRACT.md \
-        skills/signal/trade_signal_extractor.py \
-        skills/signal/ticker_resolver.py \
-        skills/signal/conviction_classifier.py
-git commit -m "feat(contract): add AGENT_CONTRACT.md behavioral contract + cite in LLM skill prompts"
 ```
 
 ---
