@@ -20,3 +20,26 @@ def build_phase1_chain(policy, idempotency_store, telegram_client) -> list[Skill
         ConvictionClassifier(policy),
         TelegramDigest(telegram_client, mode="signal_only"),
     ]
+
+
+def build_phase2b_execution_chain(policy, execution_store, gateway) -> list:
+    from skills.execution.execution_eligibility_guard import ExecutionEligibilityGuard
+    from skills.execution.chain_lookup import ChainLookup
+    from skills.execution.instrument_marketability_guard import InstrumentMarketabilityGuard
+    from skills.execution.contract_selector import ContractSelector
+    from skills.execution.order_sizer import OrderSizer
+    from skills.execution.order_pricer import OrderPricer
+    from skills.execution.order_submitter import OrderSubmitter
+    from skills.execution.fill_waiter import FillWaiter
+
+    return [
+        ExecutionEligibilityGuard(policy),
+        ChainLookup(gateway, execution_store._conn),
+        InstrumentMarketabilityGuard(policy),
+        ContractSelector(policy),
+        OrderSizer(policy, gateway),
+        OrderPricer(policy),
+        OrderSubmitter(gateway, execution_store),
+        FillWaiter(gateway, execution_store,
+                   timeout=policy.execution.fill_wait_timeout_seconds),
+    ]
