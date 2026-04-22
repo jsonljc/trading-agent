@@ -62,10 +62,9 @@ class IBGateway:
         from ib_insync import IB
         self._ib = IB()
         p = self._policy.ib_gateway
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: self._ib.connect(p.host, p.port, clientId=p.client_id),
-        )
+        await self._ib.connectAsync(p.host, p.port, clientId=p.client_id)
+        # Enable delayed market data (free tier fallback)
+        self._ib.reqMarketDataType(3)
         accounts = self._ib.managedAccounts()
         self._account_id = accounts[0] if accounts else None
         self._connected = True
@@ -80,10 +79,7 @@ class IBGateway:
         self._read_breaker.check()
         try:
             ib_contract = _to_ib_contract(contract_ref)
-            qualified = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self._ib.qualifyContracts(ib_contract),
-            )
+            qualified = await self._ib.qualifyContractsAsync(ib_contract)
             if not qualified:
                 raise IBGatewayUnavailable("qualification returned empty")
             result = _from_ib_contract(qualified[0])
@@ -100,28 +96,35 @@ class IBGateway:
         self._read_breaker.check()
         try:
             from ib_insync import Stock, Option
-            chains = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self._ib.reqSecDefOptParams(ticker, "", "STK", 0),
-            )
+            stock = Stock(ticker, "SMART", "USD")
+            qualified_stocks = await self._ib.qualifyContractsAsync(stock)
+            if not qualified_stocks:
+                self._read_breaker._record_success()
+                return []
+            underlying_con_id = qualified_stocks[0].conId
+
+            chains = await self._ib.reqSecDefOptParamsAsync(ticker, "", "STK", underlying_con_id)
             if not chains:
                 self._read_breaker._record_success()
                 return []
             chain = chains[0]
+
             candidates: list[OptionCandidate] = []
             for expiry in chain.expirations:
                 for strike in chain.strikes:
                     for right in ("C", "P"):
                         opt = Option(ticker, expiry, strike, right, "SMART")
                         try:
-                            qualified = self._ib.qualifyContracts(opt)
+                            qualified = await self._ib.qualifyContractsAsync(opt)
                             if not qualified:
                                 continue
                             q = qualified[0]
-                            ticker_data = self._ib.reqMktData(q, "", False, False)
-                            self._ib.sleep(1)
-                            bid = ticker_data.bid if ticker_data.bid and ticker_data.bid > 0 else 0.0
-                            ask = ticker_data.ask if ticker_data.ask and ticker_data.ask > 0 else 0.0
+                            tickers = await self._ib.reqTickersAsync(q)
+                            if not tickers:
+                                continue
+                            td = tickers[0]
+                            bid = float(td.bid) if td.bid and td.bid == td.bid and td.bid > 0 else 0.0
+                            ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
                             mid = (bid + ask) / 2
                             spread_pct = ((ask - bid) / ask) if ask > 0 else 1.0
                             ref = _from_ib_contract(q)
@@ -153,10 +156,10 @@ class IBGateway:
     async def get_account_summary(self) -> AccountSummary:
         self._read_breaker.check()
         try:
-            summary = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self._ib.accountSummary(),
-            )
+            # accountSummary() reads ib_insync's cached account values (updated on connect)
+            summary = self._ib.accountSummary()
+            if not summary:
+                summary = await self._ib.reqAccountSummaryAsync()
             values = {item.tag: item.value for item in summary}
             result = AccountSummary(
                 buying_power=float(values.get("BuyingPower", 0)),
@@ -176,16 +179,19 @@ class IBGateway:
         try:
             from ib_insync import Stock
             stock = Stock(ticker, "SMART", "USD")
-            qualified = self._ib.qualifyContracts(stock)
+            qualified = await self._ib.qualifyContractsAsync(stock)
             if not qualified:
                 raise IBGatewayUnavailable(f"could not qualify equity {ticker}")
-            ticker_data = self._ib.reqMktData(qualified[0], "", False, False)
-            self._ib.sleep(1)
-            ask = ticker_data.ask
-            if not ask or ask <= 0:
-                raise IBGatewayUnavailable(f"no ask price for {ticker}")
-            self._read_breaker._record_success()
-            return float(ask)
+            tickers = await self._ib.reqTickersAsync(qualified[0])
+            if not tickers:
+                raise IBGatewayUnavailable(f"no ticker data for {ticker}")
+            td = tickers[0]
+            # nan-safe price selection: ask → last → close
+            for price in (td.ask, td.last, td.close):
+                if price and price == price and price > 0:
+                    self._read_breaker._record_success()
+                    return float(price)
+            raise IBGatewayUnavailable(f"no valid price for {ticker}")
         except IBGatewayUnavailable:
             raise
         except Exception as exc:
@@ -243,11 +249,11 @@ class IBGateway:
         submitted_qty = trade.order.totalQuantity
         while time.monotonic() < deadline:
             await asyncio.sleep(1.0)
-            self._ib.sleep(0)
+            # ib_insync updates trade status via the running asyncio event loop
             filled = trade.orderStatus.filled
             remaining = trade.orderStatus.remaining
             status_str = trade.orderStatus.status
-            if status_str in ("Filled",):
+            if status_str == "Filled":
                 return FillResult(
                     status=FillStatus.FILLED,
                     broker_order_id=broker_order_id,
@@ -271,7 +277,7 @@ class IBGateway:
                     last_status=status_str,
                     status_timestamp=datetime.now(timezone.utc).isoformat(),
                 )
-            if status_str in ("Inactive",):
+            if status_str == "Inactive":
                 return FillResult(
                     status=FillStatus.REJECTED,
                     broker_order_id=broker_order_id,
@@ -305,8 +311,8 @@ class IBGateway:
         p = self._policy.ib_gateway
         if p.mode != "paper":
             raise LiveTradingBlocked("mode is not 'paper'")
-        if p.port != 7497:
-            raise LiveTradingBlocked(f"port {p.port} is not the paper trading port (7497)")
+        if p.port not in (7497, 4002):
+            raise LiveTradingBlocked(f"port {p.port} is not a paper trading port (7497/4002)")
         if self._account_id:
             prefix_ok = any(self._account_id.startswith(pfx) for pfx in p.paper_account_prefixes)
             if not prefix_ok:
