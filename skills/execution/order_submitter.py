@@ -62,7 +62,7 @@ class OrderSubmitter(Skill):
         })
 
         order = PreparedOrder(
-            action="BUY",
+            action=ctx.get("action", "BUY"),
             quantity=quantity,
             order_type="LMT",
             limit_price=limit_price,

@@ -40,7 +40,6 @@ def _gateway(trade_id="IB-1"):
 async def test_option_submitter_writes_execution_row(db):
     from infra.storage.execution_store import ExecutionStore
     store = ExecutionStore(db)
-    gw = _gateway()
     skill = OrderSubmitter(_gateway(), store)
     result = await skill.run(_ctx())
     assert result.status == "success"
