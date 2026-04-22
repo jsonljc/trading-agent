@@ -21,6 +21,7 @@ from infra.storage.idempotency_store import IdempotencyStore
 from infra.storage.signal_store import SignalStore
 from infra.telegram.client import TelegramClient
 from infra.bridge_client.socket_reader import SocketReader, TriggerEvent
+from infra.bridge_client.notification_poller import NotificationBannerPoller
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
@@ -79,6 +80,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     reader = SocketReader(socket_path)
     logger.info("Trading agent Phase 1 ready. Listening on %s", socket_path)
     try:
+        NotificationBannerPoller().start()
+        logger.info("Notification banner poller started")
         await reader.start(handle_event)
     finally:
         await conn.close()
