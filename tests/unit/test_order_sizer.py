@@ -80,6 +80,16 @@ async def test_gateway_unavailable_fails():
 
 
 @pytest.mark.asyncio
+async def test_no_matching_candidate_fails():
+    sizer = OrderSizer(_policy(), _gateway(100_000))
+    ctx = _ctx(instrument_type="option", conviction="high", ask=5.0)
+    ctx.update({"selected_strike": 999.0})  # no candidate at this strike
+    result = await sizer.run(ctx)
+    assert result.status == "fail"
+    assert "no matching candidate" in result.reason
+
+
+@pytest.mark.asyncio
 async def test_equity_sizing_uses_get_quote():
     gw = _gateway(100_000)
     gw.get_quote = AsyncMock(return_value=200.0)
@@ -89,3 +99,6 @@ async def test_equity_sizing_uses_get_quote():
     # 10% of 100k = 10k / 200 = 50 shares
     assert result.status == "success"
     assert result.updates["quantity"] == 50
+    assert result.updates["notional_estimate"] == 50 * 200.0
+    assert "high_conviction" in result.updates["sizing_reason"]
+    assert result.updates["capped_by"] is None
