@@ -31,22 +31,18 @@ class ExecutionReconciler:
         if not rows:
             return
         logger.info("ExecutionReconciler: %d uncertain executions to reconcile", len(rows))
+        try:
+            open_orders = await self._gateway.get_open_orders()
+        except IBGatewayUnavailable:
+            logger.warning("ExecutionReconciler: gateway unavailable, skipping remaining rows this cycle")
+            return
+        open_order_ids = {str(o.orderId) for o in open_orders}
         for row in rows:
             broker_order_id = row["broker_order_id"]
             if not broker_order_id:
                 continue
-            try:
-                open_orders = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._gateway._ib.openOrders() if self._gateway._ib else [],
+            if broker_order_id not in open_order_ids:
+                logger.warning(
+                    "ExecutionReconciler: order %s not in open orders — marked for manual review",
+                    broker_order_id,
                 )
-                matched = [o for o in open_orders if str(o.orderId) == broker_order_id]
-                if not matched:
-                    logger.warning(
-                        "ExecutionReconciler: order %s not in open orders — marking timed_out_pending for manual review",
-                        broker_order_id,
-                    )
-                    continue
-            except IBGatewayUnavailable:
-                logger.warning("ExecutionReconciler: gateway unavailable, skipping reconcile")
-                return

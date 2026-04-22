@@ -192,6 +192,20 @@ class IBGateway:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"get_quote failed: {exc}") from exc
 
+    async def get_open_orders(self) -> list:
+        self._read_breaker.check()
+        try:
+            if not self._ib:
+                return []
+            orders = self._ib.openOrders()
+            self._read_breaker._record_success()
+            return orders
+        except IBGatewayUnavailable:
+            raise
+        except Exception as exc:
+            self._read_breaker._record_failure()
+            raise IBGatewayUnavailable(f"get_open_orders failed: {exc}") from exc
+
     async def place_order(
         self,
         contract_ref: BrokerContractRef,
