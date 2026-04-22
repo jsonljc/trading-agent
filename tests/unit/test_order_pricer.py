@@ -53,13 +53,20 @@ async def test_option_fails_low_bid():
 
 
 @pytest.mark.asyncio
+async def test_option_fails_high_spread():
+    pricer = OrderPricer(_policy(max_spread_pct=0.40))
+    result = await pricer.run(_ctx_option(bid=4.0, ask=7.0, spread_pct=0.43))
+    assert result.status == "fail"
+
+
+@pytest.mark.asyncio
 async def test_equity_limit_price():
     # ask=150, buffer=0.001 → 150 * 1.001 = 150.15
     pricer = OrderPricer(_policy())
     ctx = _ctx_equity(ask=150.0)
     result = await pricer.run(ctx)
     assert result.status == "success"
-    assert abs(result.updates["limit_price"] - 150.15) < 0.01
+    assert result.updates["limit_price"] == 150.15
 
 
 @pytest.mark.asyncio
