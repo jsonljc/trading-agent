@@ -4,6 +4,9 @@
 **Scope:** Phase 2b — full execution layer via IB Gateway paper trading API
 **Prerequisite:** Phase 2a signal pipeline complete (ParsedTradeSignal, SignalApprovalGate, MarketHoursGuard)
 
+> **Why both `MarketHoursGuard` and `ExecutionEligibilityGuard`?**
+> `MarketHoursGuard` (Phase 2a) is a chain-level gate that blocks execution-phase skills from running at all outside eligible windows — it is the approval-visibility / execution-eligibility split point. `ExecutionEligibilityGuard` (Phase 2b) operates inside the execution path and classifies the active session (`rth` / `premarket` / `afterhours`) so downstream skills can behave correctly for each context (e.g., `QUEUE_FOR_SESSION` for afterhours equity). They are not duplicates: the first is a hard blocker, the second is a session classifier. Do not collapse them.
+
 ---
 
 ## Context
@@ -256,8 +259,8 @@ CREATE TABLE IF NOT EXISTS executions (
     capped_by TEXT,
     broker_order_id TEXT,
     perm_id INTEGER,
-    status TEXT NOT NULL,             -- submitted_unfilled | filled | partial_fill
-                                      -- timed_out_pending | cancelled | rejected
+    status TEXT NOT NULL,             -- FillStatus enum values: submitted_unfilled | filled
+                                      -- partial_fill | timed_out_pending | cancelled | rejected
     filled_qty INTEGER DEFAULT 0,
     avg_fill_price REAL,
     idempotency_key TEXT NOT NULL,
@@ -496,13 +499,14 @@ These invariants are absolute — code must enforce them, this file names them.
 | Invariant | Enforced by |
 |---|---|
 | Only `gateway.py` imports `ib_insync` | Import boundary (enforced by convention + future lint rule) |
+| Approval artifact must not be expired before submission | `OrderSubmitter` checks `approval_artifact.expires_at` before calling `gateway.place_order()`; expired → `fail` with `approval_expired` |
 | `place_order()` only accepts `qualified=True` contracts | `IBGateway.place_order()` assertion |
 | No live orders when `mode=paper` | `IBGateway` blast radius guard (mode + port + account prefix) |
 | No silent write retries | `IBGateway` retry policy (reads only) |
 | Every order submission has an idempotency key | `OrderSubmitter` required `client_order_id` at gateway boundary |
 | Fill timeouts do not trip circuit breaker | Explicit exclusion in breaker counters |
 | `ExecutionAuditWriter` always runs | Post-chain hook, not a chain skill |
-| `executions` row written before `place_order()` returns | `OrderSubmitter` write-before-submit ordering |
+| `executions` row created before `gateway.place_order()` is called | `OrderSubmitter`: insert row with `status=submitted_unfilled`, then submit — never submit first |
 
 ---
 
