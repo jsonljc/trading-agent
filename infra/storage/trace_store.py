@@ -1,6 +1,16 @@
+import dataclasses
 import json
 from datetime import datetime, timezone
+from enum import Enum
 import aiosqlite
+
+
+def _default(obj):
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return dataclasses.asdict(obj)
+    if isinstance(obj, Enum):
+        return obj.value
+    return f"<{type(obj).__name__}>"
 
 
 class TraceStore:
@@ -24,6 +34,6 @@ class TraceStore:
     async def record_skill(self, trace_id: str, skill_name: str, status: str, output: dict) -> None:
         await self._conn.execute(
             "INSERT INTO skill_outputs (trace_id, skill_name, status, output_json, created_at) VALUES (?, ?, ?, ?, ?)",
-            (trace_id, skill_name, status, json.dumps(output), datetime.now(timezone.utc).isoformat()),
+            (trace_id, skill_name, status, json.dumps(output, default=_default), datetime.now(timezone.utc).isoformat()),
         )
         await self._conn.commit()
