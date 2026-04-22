@@ -57,3 +57,15 @@ async def test_rejected_returns_fail(db):
     result = await skill.run(_ctx())
     assert result.status == "fail"
     assert "rejected" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_cancelled_returns_fail(db):
+    from infra.storage.execution_store import ExecutionStore
+    store = ExecutionStore(db)
+    gw = MagicMock()
+    gw.wait_fill = AsyncMock(return_value=_fill_result(FillStatus.CANCELLED, filled_qty=0, avg_price=None))
+    skill = FillWaiter(gw, store, timeout=1.0)
+    result = await skill.run(_ctx())
+    assert result.status == "fail"
+    assert "cancelled" in result.reason

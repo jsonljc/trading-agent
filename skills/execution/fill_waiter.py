@@ -18,7 +18,7 @@ class FillWaiter(Skill):
     async def run(self, ctx: Context) -> SkillResult:
         trade = ctx.get("_trade")
         execution_id = ctx.get("execution_id")
-        timeout = self._timeout or 30.0
+        timeout = self._timeout if self._timeout is not None else 30.0
 
         fill = await self._gateway.wait_fill(trade, timeout=timeout)
 
@@ -42,6 +42,13 @@ class FillWaiter(Skill):
             return SkillResult(
                 status="fail",
                 reason=f"fill rejected: broker_status={fill.last_status}",
+                updates=updates,
+            )
+
+        if fill.status == FillStatus.CANCELLED:
+            return SkillResult(
+                status="fail",
+                reason=f"fill cancelled: broker_status={fill.last_status}",
                 updates=updates,
             )
 
