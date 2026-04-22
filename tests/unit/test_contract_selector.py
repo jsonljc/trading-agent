@@ -72,3 +72,30 @@ async def test_rejects_low_bid():
     result = await selector.run(_ctx(candidates=candidates, spot=155.0))
     assert result.status == "fail"
     assert "no_eligible_contract" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rejects_wide_spread():
+    candidates = [_candidate(150, spread_pct=0.50)]  # above max_spread_pct=0.40
+    selector = ContractSelector(_policy(max_spread_pct=0.40))
+    result = await selector.run(_ctx(candidates=candidates, spot=155.0))
+    assert result.status == "fail"
+    assert "no_eligible_contract" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_otm_fallback_when_no_itm():
+    # spot=100, all candidates have strike >= spot → no ITM, fallback to nearest OTM
+    candidates = [_candidate(110), _candidate(120), _candidate(130)]
+    selector = ContractSelector(_policy())
+    result = await selector.run(_ctx(candidates=candidates, spot=100.0))
+    assert result.status == "success"
+    assert result.updates["selected_strike"] == 110.0  # lowest OTM
+
+
+@pytest.mark.asyncio
+async def test_empty_candidates_fails():
+    selector = ContractSelector(_policy())
+    result = await selector.run(_ctx(candidates=[], spot=155.0))
+    assert result.status == "fail"
+    assert "no_eligible_contract" in result.reason
