@@ -37,10 +37,10 @@ class NotificationBannerPoller(threading.Thread):
     watcher then detects the navigation and captures the message.
     """
 
-    def __init__(self, poll_interval: float = 0.3) -> None:
+    def __init__(self, poll_interval: float = 0.3, initial_count: int | None = None) -> None:
         super().__init__(name="notification-banner-poller", daemon=True)
         self._interval = poll_interval
-        self._last_count: int = self._get_window_count()
+        self._last_count: int = initial_count if initial_count is not None else self._get_window_count()
 
     def run(self) -> None:
         while True:
@@ -70,7 +70,9 @@ class NotificationBannerPoller(threading.Thread):
             return 0
 
     def _click_banner(self) -> None:
-        subprocess.run(
+        result = subprocess.run(
             ["osascript", "-e", _CLICK_SCRIPT],
             capture_output=True, text=True, timeout=3,
         )
+        if result.returncode != 0:
+            logger.warning("Click script failed (rc=%d): %s", result.returncode, result.stderr.strip())

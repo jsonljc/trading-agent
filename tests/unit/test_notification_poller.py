@@ -1,15 +1,14 @@
-import threading
 from unittest.mock import patch, MagicMock
 from infra.bridge_client.notification_poller import NotificationBannerPoller
 
 
 def test_is_daemon_thread():
-    poller = NotificationBannerPoller()
+    poller = NotificationBannerPoller(initial_count=0)
     assert poller.daemon is True
 
 
 def test_does_not_click_when_count_unchanged():
-    poller = NotificationBannerPoller()
+    poller = NotificationBannerPoller(initial_count=0)
     with patch("infra.bridge_client.notification_poller.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="2\n", returncode=0)
         poller._last_count = 2
@@ -19,7 +18,7 @@ def test_does_not_click_when_count_unchanged():
 
 
 def test_clicks_when_count_increases():
-    poller = NotificationBannerPoller()
+    poller = NotificationBannerPoller(initial_count=0)
     with patch("infra.bridge_client.notification_poller.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="3\n", returncode=0)
         poller._last_count = 2
