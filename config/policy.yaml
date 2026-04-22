@@ -43,8 +43,24 @@ watched_channels:
   - mystic
   - alerts
   - trades
+  - wall-st-engine
+  - stock-talk-portfolio
+  - chat
 
 discord_bundle_id: "com.hnc.Discord"
 telegram:
-  chat_id: ""
-  bot_token: ""
+  chat_id: "434034796"
+  bot_token: "8468754785:AAEiTklR-t_xPE07FFwMquTRoAdAVsb9Vfg"
+
+ib_gateway:
+  host: "127.0.0.1"
+  port: 7497
+  client_id: 1
+  mode: paper
+  paper_account_prefixes:
+    - "DU"
+
+execution:
+  fill_wait_timeout_seconds: 30
+  max_equity_price: 500.0
+  reconciler_interval_seconds: 60

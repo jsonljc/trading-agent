@@ -64,6 +64,27 @@ class TelegramConfig(BaseModel):
         return os.environ.get("TELEGRAM_BOT_TOKEN") or v
 
 
+class IBGatewayPolicy(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 7497
+    client_id: int = 1
+    mode: str = "paper"
+    paper_account_prefixes: list[str] = ["DU"]
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        if v not in ("paper", "live"):
+            raise ValueError(f"mode must be 'paper' or 'live', got '{v}'")
+        return v
+
+
+class ExecutionPolicy(BaseModel):
+    fill_wait_timeout_seconds: float = 30.0
+    max_equity_price: float = 500.0
+    reconciler_interval_seconds: int = 60
+
+
 class PolicyModel(BaseModel):
     trigger: TriggerPolicy
     instrument_policy: InstrumentPolicy
@@ -77,6 +98,8 @@ class PolicyModel(BaseModel):
     watched_channels: list[str]
     discord_bundle_id: str
     telegram: TelegramConfig
+    ib_gateway: IBGatewayPolicy = IBGatewayPolicy()
+    execution: ExecutionPolicy = ExecutionPolicy()
 
 
 def load_policy(path: str) -> PolicyModel:
