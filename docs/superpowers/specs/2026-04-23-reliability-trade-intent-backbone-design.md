@@ -1,7 +1,7 @@
 # Spec 1 — Reliability & TradeIntent Backbone
 
 **Date:** 2026-04-23
-**Goal:** Give every signal a canonical, durable record from Phase 2b entry to fill or terminal state.
+**Goal:** Give every signal a canonical, durable record from post-parse intent creation to fill or terminal state.
 Separate policy decisions from execution failures. Support fast trading without ambiguity about
 whether an order was placed, filled, or lost.
 
@@ -21,8 +21,10 @@ typed record. This means:
 
 ## Architecture
 
-A `trade_intents` table is written at Phase 2b entry — after Phase 1 (signal parsing) passes and
-before any execution begins. Every downstream feature anchors to this single row.
+A `trade_intents` row is created immediately after `SignalAnalyzer` output is parsed and before
+deterministic validation, channel policy gating, cooldown checks, or any execution begins. This
+makes the intent row the canonical record for both policy denials and execution outcomes. Every
+downstream feature anchors to this single row.
 
 Two independent state tracks:
 
@@ -76,7 +78,10 @@ CREATE TABLE trade_intents (
                                            --   | ambiguous_signal
 
   -- Execution strategy (encoded at order time)
-  execution_mode         TEXT,             -- auto_live | observe
+  -- policy_state is the source of truth for whether execution is permitted.
+  -- execution_mode is only meaningful for intents that remain executable after
+  -- validation and policy gating; null for terminal policy-blocked intents.
+  execution_mode         TEXT,             -- auto_live | observe | null
   order_type             TEXT,             -- marketable_limit
   walk_profile           TEXT,             -- cautious_fast | aggressive_fast
   initial_reference_ask  REAL,             -- ask when first order placed
@@ -97,6 +102,8 @@ CREATE TABLE trade_intents (
   dlq_reason             TEXT,             -- only populated on failed state
 
   -- Cancel reason (enumerated)
+  -- stale_signal = pre-order invalidation (signal aged out before execution began)
+  -- stale_quote  = quote-age failure inside PriceWalker mid-walk
   cancel_reason          TEXT,             -- walk_exhausted | price_exceeded_cap |
                                            --   manual_cancel | stale_signal |
                                            --   market_closed | fill_timeout | stale_quote
@@ -112,6 +119,10 @@ CREATE TABLE trade_intents (
   updated_at             TEXT NOT NULL
 );
 ```
+
+Per-attempt submission and acknowledgment timestamps are intentionally not modeled in v1. The
+schema captures first-submit and terminal timings only; attempt-level execution history can be
+added later if fine-grained walk diagnostics become necessary.
 
 Derived latency metrics are computed at query time from timestamps:
 - `signal_received_at → intent_created_at` = orchestration overhead
@@ -147,9 +158,11 @@ A `ChannelPolicyGuard` skill at Phase 2b entry checks this. If `auto_execute: fa
 
 ## Transactional Outbox
 
-Before `PriceWalker` calls IBKR, the intent row is updated to `outbox_status: pending`.
-After IBKR acknowledges placement, updated to `dispatched`. After fill confirmed, updated to
-`confirmed`.
+Before `PriceWalker` makes the first broker-side effect, the intent row is updated to
+`outbox_status: pending`. After IBKR acknowledges the first live order, `outbox_status` is
+updated to `dispatched`. After terminal execution success (filled), `outbox_status` is updated
+to `confirmed`. This field is used for crash recovery and reconciliation of broker-side effects,
+not as a general business workflow state.
 
 On restart, `ExecutionReconciler` scans for rows stuck in `pending` or `dispatched` and
 reconciles against IBKR open orders. Prevents "did we place it or not?" ambiguity after

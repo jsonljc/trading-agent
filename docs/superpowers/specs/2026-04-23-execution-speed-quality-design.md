@@ -1,9 +1,10 @@
 # Spec 2 — Execution Speed & Quality
 
 **Date:** 2026-04-23
-**Goal:** Get the first limit order live within ~6 seconds of a Discord signal, filled within
-10 seconds of order placement, for any ticker including less-liquid names. No pre-warming
-required. No blind market orders. Bounded aggressive walk with a hard chase cap.
+**Goal:** Get the first limit order live within ~6 seconds of a Discord signal and complete a
+bounded fill attempt within 10 seconds of order placement, for any ticker including less-liquid
+names. No pre-warming required. No blind market orders. Bounded aggressive walk with a hard
+chase cap.
 
 ---
 
@@ -40,8 +41,12 @@ t=6.0s:  First walk step placed — order live
 t=6–16s: PriceWalker running (fills within this window)
 ```
 
-"Order live" target: ~6 seconds from signal. Expected gateway; actual timing depends on
+"Order live" target: ~6 seconds from signal on a healthy gateway. Actual timing depends on
 Discord render state, IBKR gateway health, and market-data conditions.
+
+`trade_intents` is created immediately after `SignalAnalyzer` output is parsed and before
+`TickerValidator`, policy gating, cooldown checks, chain lookup, or order execution. This keeps
+both denied and executed intents on the same durable record.
 
 ---
 
@@ -78,7 +83,8 @@ A new `SignalAnalyzer` skill makes one Haiku call and returns a strict JSON sche
 Parse failure → `status: fail`, reason: `signal_parse_failed`.
 
 **Ambiguity gate:** if `analysis_confidence < 0.70` or any flag present →
-`execution_mode: observe`, `policy_state: ambiguous_signal`. Intent logged, no execution.
+`policy_state: ambiguous_signal` and the intent becomes terminal. It is logged but does not
+enter the execution path. `execution_mode` remains unset for terminal ambiguous intents.
 
 **Logical separation preserved:** `SignalAnalyzer` records `ticker_raw`, `side_raw`,
 `conviction_raw` as separate fields on the intent row (see Spec 1) so per-concern error rates
@@ -199,9 +205,10 @@ Hard 1-second SLA. Treated as degraded mode, not an equivalent path.
 
 ### Decision Gate
 
-Option A is attempted first during development. If AX message content is consistently reliable
-(>95% threshold), Option B is not implemented. If AX proves brittle across Discord updates,
-Option B is implemented as the permanent path.
+Option A is attempted first during development and remains the preferred primary path if AX
+extraction stays above the reliability threshold. Option B remains the bounded degraded fallback
+whenever AX extraction fails validation, regresses across Discord updates, or misses the latency
+target.
 
 ---
 
@@ -249,7 +256,9 @@ t=10s:   cancel → cancelled_unfilled
    Source: contract metadata if available; otherwise $0.05 rule for non-penny-pilot names
 
 4. Place limit order
-   Record: order_submitted_at (first step only), order_ack_at, order_attempt_count (starts at 1)
+   Record: order_submitted_at on the first live order only, order_ack_at on each acknowledged
+           placement for runtime use, and order_attempt_count (starts at 1). In v1, only the
+           first-submit timestamp and terminal timestamps are persisted on trade_intents.
    Update: initial_order_limit (first step), last_limit_price (every step)
 
 5. Wait for fill
@@ -276,6 +285,10 @@ t=10s:   cancel → cancelled_unfilled
 | `cancelled_unfilled` | `fill_timeout` | Walk duration exceeded hard ceiling. Telegram alert. |
 | `cancelled_unfilled` | `manual_cancel` | External cancellation. Telegram alert. |
 | `failed` | — | Broker / API / system error. → DLQ + Telegram. |
+
+`price_exceeded_cap` means the next computed step would breach `max_chase_price`, so the walk
+stops early. `walk_exhausted` means all configured walk steps completed within the cap and none
+filled. These are distinct for post-trade analysis.
 
 `cancelled_unfilled` is not a DLQ event. Price ran away or walk exhausted is expected behavior
 for a fast-moving Discord signal. `failed` is an operational problem requiring inspection.
