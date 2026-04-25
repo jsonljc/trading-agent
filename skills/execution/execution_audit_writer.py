@@ -31,3 +31,11 @@ class ExecutionAuditWriter:
         await self._conn.commit()
         logger.debug("ExecutionAuditWriter: wrote audit log for trace=%s outcome=%s",
                      ctx.trace_id, pipeline_outcome)
+
+    async def update_intent_outbox_status(self, intent_id: str, outbox_status: str) -> None:
+        await self._conn.execute(
+            "UPDATE trade_intents SET outbox_status=?, updated_at=? WHERE intent_id=?",
+            (outbox_status, datetime.now(timezone.utc).isoformat(), intent_id),
+        )
+        await self._conn.commit()
+        logger.debug("ExecutionAuditWriter: intent %s outbox_status=%s", intent_id, outbox_status)
