@@ -1,42 +1,28 @@
 import Foundation
+import Darwin
+setbuf(stdout, nil)  // unbuffered stdout so logs appear immediately
 
 let socketPath = CommandLine.arguments.count > 1
-    ? CommandLine.arguments[1]
-    : "/tmp/trading_bridge.sock"
+    ? CommandLine.arguments[1] : "/tmp/trading_bridge.sock"
+let logPath = CommandLine.arguments.count > 2
+    ? CommandLine.arguments[2] : "data/ax_events.log"
 
-let discordBundleId = "com.hnc.Discord"
-let watchedChannels = ["mystic", "alerts", "trades"]
+let dataDir = URL(fileURLWithPath: logPath).deletingLastPathComponent().path
+try? FileManager.default.createDirectory(atPath: dataDir, withIntermediateDirectories: true)
 
-let poller = NotificationPoller()
-let emitter = SocketEmitter(socketPath: socketPath)
+let watcher = AXDiscordWatcher(
+    bundleId: "com.hnc.Discord",
+    watchedChannels: ["mystic", "alerts", "trades", "wall-st-engine", "stock-talk-portfolio", "chat",
+                      "yonezu", "pup-danny", "urkel", "gladiator", "graddox", "phat", "grid"],
+    socketPath: socketPath,
+    logPath: logPath
+)
 
-print("NotificationBridge started. Socket: \(socketPath)")
-
-while true {
-    let records = poller.pollNew()
-    for record in records {
-        guard record.appBundleId == discordBundleId else { continue }
-
-        let channelName = record.subtitle
-            .trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: "#", with: "")
-            .lowercased()
-
-        guard watchedChannels.contains(channelName) else { continue }
-
-        let eventId = UUID().uuidString
-        let event: [String: String] = [
-            "event_id": eventId,
-            "source": "discord_notification",
-            "channel": channelName,
-            "author": record.title,
-            "trigger_preview": record.body,
-            "received_at": ISO8601DateFormatter().string(from: Date()),
-        ]
-
-        emitter.emit(event)
-        print("Emitted event: \(eventId) channel=\(channelName) preview=\(record.body.prefix(60))")
-    }
-
-    Thread.sleep(forTimeInterval: 0.5)
+// Click Discord notification banners so Discord navigates to the channel,
+// then trigger an immediate reconcile sweep to capture the message.
+let bannerClicker = NotificationBannerClicker(discordBundleId: "com.hnc.Discord") {
+    watcher.triggerReconcile()
 }
+bannerClicker.start()
+
+watcher.start()

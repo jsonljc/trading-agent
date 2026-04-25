@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,11 @@ class SocketReader:
 
     async def start(self, on_event) -> None:
         """Start listening. Calls on_event(TriggerEvent) for each received event."""
+        try:
+            os.unlink(self._path)
+        except FileNotFoundError:
+            pass
+
         async def _connected(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             await self._handle(reader, writer, on_event)
 

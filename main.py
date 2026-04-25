@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from dotenv import load_dotenv
+load_dotenv()
 """
 Trading agent Phase 1 entry point.
 Reads trigger events from the Swift bridge Unix socket, runs the Phase 1 pipeline.
@@ -92,6 +94,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
         await orch.run(ctx)
         await audit_writer.write(ctx, "success")
+        if ctx.get("fill_status"):
+            await digest_skill.send_fill_digest(ctx)
 
     reconciler = ExecutionReconciler(
         gateway, execution_store,

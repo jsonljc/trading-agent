@@ -61,6 +61,31 @@ class TelegramDigest(Skill):
         except Exception as exc:
             logger.error("Error digest delivery failed: %s", exc)
 
+    async def send_fill_digest(self, ctx: Context) -> None:
+        import html
+        fill_status = ctx.get("fill_status", "?")
+        ticker = html.escape(ctx.get("ticker", "?"))
+        filled_qty = ctx.get("filled_qty", "?")
+        avg_price = ctx.get("avg_fill_price")
+        price_str = f"${avg_price:.2f}" if avg_price else "pending"
+        instrument = ctx.get("instrument_type", "?")
+        channel = html.escape(ctx.get("channel", "?"))
+        perm_id = ctx.get("perm_id", "")
+        status_emoji = {"FILLED": "✅", "TIMED_OUT_PENDING": "⏳", "PARTIAL_FILL": "⚡"}.get(fill_status, "📋")
+        text = (
+            f"{status_emoji} <b>ORDER {fill_status}</b>\n\n"
+            f"Ticker: <b>{ticker}</b> ({instrument})\n"
+            f"Qty: {filled_qty} @ {price_str}\n"
+            f"Source: #{channel}\n"
+        )
+        if perm_id:
+            text += f"PermID: <code>{perm_id}</code>\n"
+        text += f"<code>trace: {ctx.trace_id}</code>"
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Fill digest delivery failed: %s", exc)
+
     async def send_skip_digest(self, ctx: Context, reason: str) -> None:
         import html
         text = (
