@@ -35,8 +35,13 @@ class MarketHours(BaseModel):
     stock_afterhours_queue: bool
 
 
+class ChannelConfig(BaseModel):
+    auto_execute: bool = False
+
+
 class CooldownPolicy(BaseModel):
     enabled: bool
+    cooldown_minutes: int = 30
 
 
 class DedupePolicy(BaseModel):
@@ -95,7 +100,7 @@ class PolicyModel(BaseModel):
     dedupe_policy: DedupePolicy
     pricing_policy_guards: PricingGuards
     models: ModelsConfig
-    watched_channels: list[str]
+    watched_channels: dict[str, ChannelConfig]
     discord_bundle_id: str
     telegram: TelegramConfig
     ib_gateway: IBGatewayPolicy = IBGatewayPolicy()

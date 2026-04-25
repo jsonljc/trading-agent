@@ -25,7 +25,8 @@ market_hours:
   stock_afterhours_queue: true
 
 cooldown_policy:
-  enabled: false
+  enabled: true
+  cooldown_minutes: 30
 
 dedupe_policy:
   enabled: true
@@ -40,19 +41,32 @@ models:
   text: claude-haiku-4-5-20251001
 
 watched_channels:
-  - mystic
-  - alerts
-  - trades
-  - wall-st-engine
-  - stock-talk-portfolio
-  - chat
-  - yonezu
-  - pup-danny
-  - urkel
-  - gladiator
-  - graddox
-  - phat
-  - grid
+  mystic:
+    auto_execute: true
+  alerts:
+    auto_execute: true
+  trades:
+    auto_execute: true
+  wall-st-engine:
+    auto_execute: false
+  stock-talk-portfolio:
+    auto_execute: false
+  chat:
+    auto_execute: false
+  yonezu:
+    auto_execute: true
+  pup-danny:
+    auto_execute: true
+  urkel:
+    auto_execute: true
+  gladiator:
+    auto_execute: true
+  graddox:
+    auto_execute: true
+  phat:
+    auto_execute: true
+  grid:
+    auto_execute: true
 
 discord_bundle_id: "com.hnc.Discord"
 telegram:
