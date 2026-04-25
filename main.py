@@ -53,7 +53,7 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     from skills.execution.execution_audit_writer import ExecutionAuditWriter
     from skills.execution.execution_reconciler import ExecutionReconciler
 
-    phase1_chain = build_phase1_chain(policy, idempotency_store, telegram)
+    phase1_chain = build_phase1_chain(policy, idempotency_store, telegram, gateway=gateway)
     phase2b_chain = build_phase2b_execution_chain(policy, execution_store, gateway, trade_intent_store)
     full_chain = phase1_chain + phase2b_chain
 
