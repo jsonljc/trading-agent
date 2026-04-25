@@ -22,7 +22,10 @@ def build_phase1_chain(policy, idempotency_store, telegram_client) -> list[Skill
     ]
 
 
-def build_phase2b_execution_chain(policy, execution_store, gateway) -> list:
+def build_phase2b_execution_chain(policy, execution_store, gateway, trade_intent_store=None) -> list:
+    from skills.execution.trade_intent_writer import TradeIntentWriter
+    from skills.execution.channel_policy_guard import ChannelPolicyGuard
+    from skills.execution.cooldown_guard import CooldownGuard
     from skills.execution.execution_eligibility_guard import ExecutionEligibilityGuard
     from skills.execution.chain_lookup import ChainLookup
     from skills.execution.instrument_marketability_guard import InstrumentMarketabilityGuard
@@ -32,7 +35,15 @@ def build_phase2b_execution_chain(policy, execution_store, gateway) -> list:
     from skills.execution.order_submitter import OrderSubmitter
     from skills.execution.fill_waiter import FillWaiter
 
-    return [
+    guards = []
+    if trade_intent_store is not None:
+        guards = [
+            TradeIntentWriter(trade_intent_store),
+            ChannelPolicyGuard(policy, trade_intent_store),
+            CooldownGuard(policy, trade_intent_store),
+        ]
+
+    return guards + [
         ExecutionEligibilityGuard(policy),
         ChainLookup(gateway, execution_store._conn),
         InstrumentMarketabilityGuard(policy),
