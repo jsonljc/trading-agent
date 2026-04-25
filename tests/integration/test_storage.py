@@ -84,7 +84,6 @@ async def test_idempotency_insert_if_new(conn):
     assert duplicate is False
 
 
-@pytest.mark.asyncio
 async def test_trade_intents_table_exists(conn):
     async with conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_intents'"
@@ -93,7 +92,6 @@ async def test_trade_intents_table_exists(conn):
     assert row is not None
 
 
-@pytest.mark.asyncio
 async def test_dlq_intents_view_exists(conn):
     async with conn.execute(
         "SELECT name FROM sqlite_master WHERE type='view' AND name='dlq_intents'"
