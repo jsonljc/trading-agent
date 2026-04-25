@@ -23,6 +23,7 @@ from skills.execution.order_sizer import OrderSizer
 from skills.execution.order_pricer import OrderPricer
 from skills.execution.order_submitter import OrderSubmitter
 from skills.execution.fill_waiter import FillWaiter
+from skills.execution.price_walker import PriceWalker
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -253,3 +254,68 @@ async def test_channel_blocked_skips_execution(db):
     async with db.execute("SELECT count(*) as n FROM executions") as cur:
         count_row = await cur.fetchone()
     assert count_row["n"] == 0
+
+
+def _gateway_with_price_walker():
+    fake_trade = MagicMock()
+    fake_trade.order.orderId = "IB-PW-1"
+    fake_trade.order.permId = 99
+    fill_status = MagicMock()
+    fill_status.status = "Filled"
+    fill_status.filled = 9
+    fill_status.remaining = 0
+    fill_status.avgFillPrice = 5.56
+    fake_trade.orderStatus = fill_status
+
+    gw = MagicMock()
+    gw.get_chain = AsyncMock(return_value=[_candidate(strike=150.0)])
+    gw.get_account_summary = AsyncMock(return_value=AccountSummary(
+        buying_power=50_000.0, net_liquidation=50_000.0, currency="USD"
+    ))
+    gw.get_quote = AsyncMock(return_value=155.0)
+    gw.qualify = AsyncMock(side_effect=lambda ref: setattr(ref, 'qualified', True) or ref)
+    gw.place_order = AsyncMock(return_value=fake_trade)
+    gw.cancel_order = AsyncMock(return_value=True)
+    gw.get_option_ask = AsyncMock(return_value=(5.50, 0.0))
+    gw._account_id = "DU12345"
+    return gw
+
+
+async def test_price_walker_fills_on_first_step(db):
+    policy = _policy()
+    policy.execution.walk_profile = "aggressive_fast"
+    policy.execution.walk_profiles = {
+        "aggressive_fast": [0.01, 0.03, 0.06, 0.10],
+    }
+    policy.execution.max_chase_pct = 0.15
+    policy.execution.reprice_interval_ms = 100  # fast for tests
+
+    gateway = _gateway_with_price_walker()
+    execution_store = ExecutionStore(db)
+    intent_store = TradeIntentStore(db)
+    trace_store = TraceStore(db)
+
+    chain = [
+        ExecutionEligibilityGuard(policy, time_fn=_rth_time),
+        ChainLookup(gateway, db),
+        InstrumentMarketabilityGuard(policy),
+        ContractSelector(policy),
+        OrderSizer(policy, gateway),
+        OrderPricer(policy),
+        PriceWalker(policy, gateway, intent_store),
+    ]
+
+    orch = Orchestrator(chain, trace_store)
+    ctx = Context(trace_id=str(uuid.uuid4())[:12], event_id="evt-pw-1")
+    ctx.update({
+        "signal_id": "sig-pw-1",
+        "ticker": "AAPL",
+        "conviction_bucket": "high",
+        "spot_price": 152.0,
+        "intent_id": "evt-pw-1:AAPL:long",
+        "action": "BUY",
+    })
+
+    result_ctx = await orch.run(ctx)
+    assert result_ctx.get("fill_status") == "filled"
+    assert result_ctx.get("order_attempt_count") == 1
