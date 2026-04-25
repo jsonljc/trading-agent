@@ -41,7 +41,7 @@ class OrderPricer(Skill):
             limit_price = round(ask * (1 + pp.stock_buffer_pct), 2)
 
         logger.info("OrderPricer: limit_price=%.2f type=%s", limit_price, instrument_type)
-        return SkillResult(status="success", updates={
-            "limit_price": limit_price,
-            "order_type": "LMT",
-        })
+        updates = {"limit_price": limit_price, "order_type": "LMT"}
+        if instrument_type == "option":
+            updates["initial_reference_ask"] = c.ask
+        return SkillResult(status="success", updates=updates)
