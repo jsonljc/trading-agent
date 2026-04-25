@@ -82,3 +82,21 @@ async def test_idempotency_insert_if_new(conn):
     assert inserted is True
     duplicate = await store.insert_if_new("key2", "evt2", "TSLA", "long")
     assert duplicate is False
+
+
+@pytest.mark.asyncio
+async def test_trade_intents_table_exists(conn):
+    async with conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_intents'"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+
+
+@pytest.mark.asyncio
+async def test_dlq_intents_view_exists(conn):
+    async with conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='view' AND name='dlq_intents'"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
