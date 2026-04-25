@@ -85,3 +85,9 @@ execution:
   fill_wait_timeout_seconds: 30
   max_equity_price: 500.0
   reconciler_interval_seconds: 60
+  walk_profile: aggressive_fast
+  walk_profiles:
+    cautious_fast:   [0.00, 0.02, 0.05, 0.10]
+    aggressive_fast: [0.01, 0.03, 0.06, 0.10]
+  reprice_interval_ms: 2500
+  max_chase_pct: 0.15
