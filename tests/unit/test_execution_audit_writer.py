@@ -29,3 +29,32 @@ async def test_audit_writer_records_failure_outcome(db):
     async with db.execute("SELECT pipeline_outcome FROM execution_audit_log") as cur:
         row = await cur.fetchone()
     assert row["pipeline_outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_update_intent_outbox_status(db):
+    from infra.storage.trade_intent_store import TradeIntentStore
+    from datetime import datetime, timezone
+
+    store = TradeIntentStore(db)
+    now = datetime.now(timezone.utc).isoformat()
+    await store.insert({
+        "intent_id": "evt1:NVDA:long",
+        "event_id": "evt1",
+        "channel": "mystic",
+        "ticker": "NVDA",
+        "side": "long",
+        "instrument_type": "option",
+        "conviction": "high",
+        "policy_state": "approved",
+        "signal_received_at": now,
+        "intent_created_at": now,
+        "created_at": now,
+        "updated_at": now,
+    })
+
+    writer = ExecutionAuditWriter(db)
+    await writer.update_intent_outbox_status("evt1:NVDA:long", "pending")
+
+    row = await store.get("evt1:NVDA:long")
+    assert row["outbox_status"] == "pending"

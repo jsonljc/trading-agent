@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from dotenv import load_dotenv
+load_dotenv()
 """
 Trading agent Phase 1 entry point.
 Reads trigger events from the Swift bridge Unix socket, runs the Phase 1 pipeline.
@@ -36,6 +38,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     trace_store = TraceStore(conn)
     idempotency_store = IdempotencyStore(conn)
     execution_store = ExecutionStore(conn)
+    from infra.storage.trade_intent_store import TradeIntentStore
+    trade_intent_store = TradeIntentStore(conn)
     telegram = TelegramClient(
         bot_token=policy.telegram.bot_token,
         chat_id=policy.telegram.chat_id,
@@ -49,8 +53,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     from skills.execution.execution_audit_writer import ExecutionAuditWriter
     from skills.execution.execution_reconciler import ExecutionReconciler
 
-    phase1_chain = build_phase1_chain(policy, idempotency_store, telegram)
-    phase2b_chain = build_phase2b_execution_chain(policy, execution_store, gateway)
+    phase1_chain = build_phase1_chain(policy, idempotency_store, telegram, gateway=gateway)
+    phase2b_chain = build_phase2b_execution_chain(policy, execution_store, gateway, trade_intent_store)
     full_chain = phase1_chain + phase2b_chain
 
     audit_writer = ExecutionAuditWriter(conn)
@@ -92,9 +96,11 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
         await orch.run(ctx)
         await audit_writer.write(ctx, "success")
+        if ctx.get("fill_status"):
+            await digest_skill.send_fill_digest(ctx)
 
     reconciler = ExecutionReconciler(
-        gateway, execution_store,
+        gateway, execution_store, trade_intent_store,
         interval_seconds=policy.execution.reconciler_interval_seconds,
     )
 

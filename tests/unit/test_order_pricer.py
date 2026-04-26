@@ -76,3 +76,33 @@ async def test_equity_fails_above_max_price():
     result = await pricer.run(ctx)
     assert result.status == "fail"
     assert "max_equity_price" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_order_pricer_emits_initial_reference_ask():
+    from datetime import date, timedelta
+    from infra.ib.models import OptionCandidate, BrokerContractRef
+
+    policy = MagicMock()
+    policy.pricing_policy_guards.min_bid = 0.01
+    policy.pricing_policy_guards.max_spread_pct = 0.40
+    policy.pricing_policy.option_spread_fraction = 0.25
+    policy.execution.max_equity_price = 500.0
+
+    expiry = (date.today() + timedelta(days=200)).strftime("%Y-%m-%d")
+    ref = BrokerContractRef(symbol="NVDA", sec_type="OPT", exchange="SMART",
+                             currency="USD", qualified=True)
+    candidate = OptionCandidate(
+        symbol="NVDA", expiry=expiry, strike=150.0, right="C",
+        bid=5.0, ask=5.50, mid=5.25, spread_pct=0.09,
+        open_interest=100, volume=50, multiplier=100, contract_ref=ref,
+    )
+
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({"instrument_type": "option", "option_candidates": [candidate],
+                "selected_strike": 150.0})
+
+    skill = OrderPricer(policy)
+    result = await skill.run(ctx)
+    assert result.status == "success"
+    assert result.updates["initial_reference_ask"] == pytest.approx(5.50)

@@ -1,0 +1,63 @@
+from __future__ import annotations
+import logging
+from datetime import datetime, timezone
+from agent.context import Context, SkillResult
+from agent.skill import Skill
+
+logger = logging.getLogger(__name__)
+
+
+class TradeIntentWriter(Skill):
+    name = "TradeIntentWriter"
+
+    def __init__(self, trade_intent_store) -> None:
+        self._store = trade_intent_store
+
+    async def run(self, ctx: Context) -> SkillResult:
+        ticker = ctx.get("ticker")
+        if not ticker:
+            return SkillResult(status="fail", reason="trade_intent_writer: ticker missing from context")
+
+        side = ctx.get("side")
+        if not side:
+            phase1_intent = ctx.get("intent", "")
+            side = "long" if phase1_intent in ("LONG_SIGNAL", "ADD_SIGNAL") else "long"
+
+        conviction = ctx.get("conviction") or ctx.get("conviction_bucket", "medium")
+
+        now = datetime.now(timezone.utc).isoformat()
+        intent_id = f"{ctx.event_id}:{ticker}:{side}"
+
+        record = {
+            "intent_id": intent_id,
+            "event_id": ctx.event_id,
+            "channel": ctx.get("channel", ""),
+            "ticker": ticker,
+            "side": side,
+            "instrument_type": "option",
+            "expiry": None,
+            "strike": None,
+            "right": None,
+            "conviction": conviction,
+            "analysis_confidence": ctx.get("analysis_confidence"),
+            "ambiguity_flags": ctx.get("ambiguity_flags"),
+            "rationale": ctx.get("reason"),
+            "ticker_raw": ctx.get("ticker_raw", ticker),
+            "side_raw": ctx.get("side_raw") or ctx.get("intent"),
+            "conviction_raw": ctx.get("conviction_raw") or ctx.get("conviction_bucket"),
+            "reference_spot_price": None,
+            "reference_spot_timestamp": None,
+            "policy_state": "approved",
+            "execution_mode": None,
+            "execution_state": None,
+            "outbox_status": None,
+            "signal_received_at": ctx.get("received_at", now),
+            "intent_created_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        await self._store.insert(record)
+        ctx.update({"intent_id": intent_id})
+        logger.info("TradeIntentWriter: created intent %s for %s/%s", intent_id, ticker, side)
+        return SkillResult(status="success", updates={"intent_id": intent_id})

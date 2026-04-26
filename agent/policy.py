@@ -35,8 +35,13 @@ class MarketHours(BaseModel):
     stock_afterhours_queue: bool
 
 
+class ChannelConfig(BaseModel):
+    auto_execute: bool = False
+
+
 class CooldownPolicy(BaseModel):
     enabled: bool
+    cooldown_minutes: int = 30
 
 
 class DedupePolicy(BaseModel):
@@ -83,6 +88,13 @@ class ExecutionPolicy(BaseModel):
     fill_wait_timeout_seconds: float = 30.0
     max_equity_price: float = 500.0
     reconciler_interval_seconds: int = 60
+    walk_profile: str = "aggressive_fast"
+    walk_profiles: dict[str, list[float]] = {
+        "cautious_fast":   [0.00, 0.02, 0.05, 0.10],
+        "aggressive_fast": [0.01, 0.03, 0.06, 0.10],
+    }
+    reprice_interval_ms: int = 2500
+    max_chase_pct: float = 0.15
 
 
 class PolicyModel(BaseModel):
@@ -95,7 +107,7 @@ class PolicyModel(BaseModel):
     dedupe_policy: DedupePolicy
     pricing_policy_guards: PricingGuards
     models: ModelsConfig
-    watched_channels: list[str]
+    watched_channels: dict[str, ChannelConfig]
     discord_bundle_id: str
     telegram: TelegramConfig
     ib_gateway: IBGatewayPolicy = IBGatewayPolicy()

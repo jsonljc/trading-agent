@@ -92,12 +92,21 @@ class IBGateway:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"qualify failed: {exc}") from exc
 
-    async def get_chain(self, ticker: str) -> list[OptionCandidate]:
+    async def get_chain(self, ticker: str, spot_price: float | None = None) -> list[OptionCandidate]:
         self._read_breaker.check()
         try:
             from ib_insync import Stock, Option
+            from datetime import date, timedelta
+
             stock = Stock(ticker, "SMART", "USD")
-            qualified_stocks = await self._ib.qualifyContractsAsync(stock)
+            if spot_price is not None:
+                qualified_stocks = await self._ib.qualifyContractsAsync(stock)
+                spot = spot_price
+            else:
+                qualified_stocks, spot = await asyncio.gather(
+                    self._ib.qualifyContractsAsync(stock),
+                    self._fetch_spot(ticker),
+                )
             if not qualified_stocks:
                 self._read_breaker._record_success()
                 return []
@@ -109,42 +118,64 @@ class IBGateway:
                 return []
             chain = chains[0]
 
-            candidates: list[OptionCandidate] = []
-            for expiry in chain.expirations:
-                for strike in chain.strikes:
-                    for right in ("C", "P"):
-                        opt = Option(ticker, expiry, strike, right, "SMART")
-                        try:
-                            qualified = await self._ib.qualifyContractsAsync(opt)
-                            if not qualified:
-                                continue
-                            q = qualified[0]
-                            tickers = await self._ib.reqTickersAsync(q)
-                            if not tickers:
-                                continue
-                            td = tickers[0]
-                            bid = float(td.bid) if td.bid and td.bid == td.bid and td.bid > 0 else 0.0
-                            ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
-                            mid = (bid + ask) / 2
-                            spread_pct = ((ask - bid) / ask) if ask > 0 else 1.0
-                            ref = _from_ib_contract(q)
-                            ref.qualified = True
-                            candidates.append(OptionCandidate(
-                                symbol=ticker,
-                                expiry=f"{expiry[:4]}-{expiry[4:6]}-{expiry[6:]}",
-                                strike=strike,
-                                right=right,
-                                bid=bid,
-                                ask=ask,
-                                mid=mid,
-                                spread_pct=spread_pct,
-                                open_interest=None,
-                                volume=None,
-                                multiplier=int(q.multiplier or 100),
-                                contract_ref=ref,
-                            ))
-                        except Exception:
-                            continue
+            min_expiry = self._policy.instrument_policy.min_expiry_days
+            cutoff = date.today() + timedelta(days=min_expiry)
+            valid_expiries = [
+                e for e in chain.expirations
+                if date(int(e[:4]), int(e[4:6]), int(e[6:])) >= cutoff
+            ]
+
+            all_strikes = sorted(chain.strikes)
+            itm = [s for s in all_strikes if s <= spot][-3:]
+            otm = [s for s in all_strikes if s > spot][:2]
+            selected_strikes = set(itm + otm)
+
+            pre_filtered = [
+                (expiry, strike, "C")
+                for expiry in valid_expiries
+                for strike in selected_strikes
+            ]
+
+            if not pre_filtered:
+                self._read_breaker._record_success()
+                return []
+
+            async def _qualify_and_quote(expiry: str, strike: float, right: str):
+                opt = Option(ticker, expiry, strike, right, "SMART")
+                try:
+                    qualified = await self._ib.qualifyContractsAsync(opt)
+                    if not qualified:
+                        return None
+                    q = qualified[0]
+                    tickers = await self._ib.reqTickersAsync(q)
+                    if not tickers:
+                        return None
+                    td = tickers[0]
+                    bid = float(td.bid) if td.bid and td.bid == td.bid and td.bid > 0 else 0.0
+                    ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
+                    mid = (bid + ask) / 2
+                    spread_pct = ((ask - bid) / ask) if ask > 0 else 1.0
+                    ref = _from_ib_contract(q)
+                    ref.qualified = True
+                    expiry_fmt = f"{expiry[:4]}-{expiry[4:6]}-{expiry[6:]}"
+                    return OptionCandidate(
+                        symbol=ticker, expiry=expiry_fmt, strike=strike, right=right,
+                        bid=bid, ask=ask, mid=mid, spread_pct=spread_pct,
+                        open_interest=None, volume=None,
+                        multiplier=int(q.multiplier or 100), contract_ref=ref,
+                    )
+                except Exception:
+                    return None
+
+            results = await asyncio.gather(*[
+                _qualify_and_quote(e, s, r) for e, s, r in pre_filtered
+            ])
+            candidates = [c for c in results if c is not None]
+
+            if len(candidates) < 2:
+                self._read_breaker._record_failure()
+                raise IBGatewayUnavailable("chain_lookup_insufficient_candidates")
+
             self._read_breaker._record_success()
             return candidates
         except IBGatewayUnavailable:
@@ -152,6 +183,42 @@ class IBGateway:
         except Exception as exc:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"get_chain failed: {exc}") from exc
+
+    async def _fetch_spot(self, ticker: str) -> float:
+        return await self.get_quote(ticker)
+
+    async def cancel_order(self, trade, timeout: float = 5.0) -> bool:
+        import time as _time
+        self._ib.cancelOrder(trade.order)
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            status = trade.orderStatus.status
+            if status in ("Cancelled", "ApiCancelled", "Inactive"):
+                return True
+        logger.warning("cancel_order: timed out waiting for cancel confirmation")
+        return False
+
+    async def get_option_ask(self, contract_ref: BrokerContractRef) -> tuple[float, float]:
+        self._read_breaker.check()
+        try:
+            ib_contract = _to_ib_contract(contract_ref)
+            tickers = await self._ib.reqTickersAsync(ib_contract)
+            if not tickers:
+                return 0.0, float("inf")
+            td = tickers[0]
+            ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
+            age_s = 0.0
+            if getattr(td, "time", None) is not None:
+                quote_time = td.time if td.time.tzinfo else td.time.replace(tzinfo=timezone.utc)
+                age_s = max(0.0, (datetime.now(timezone.utc) - quote_time).total_seconds())
+            self._read_breaker._record_success()
+            return ask, age_s
+        except IBGatewayUnavailable:
+            raise
+        except Exception as exc:
+            self._read_breaker._record_failure()
+            raise IBGatewayUnavailable(f"get_option_ask failed: {exc}") from exc
 
     async def get_account_summary(self) -> AccountSummary:
         self._read_breaker.check()
