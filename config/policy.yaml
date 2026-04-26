@@ -71,7 +71,7 @@ watched_channels:
 discord_bundle_id: "com.hnc.Discord"
 telegram:
   chat_id: "434034796"
-  bot_token: "8473901633:AAGAmYwN5vIzBeI8vlzUbhU8JrDHa8er5iQ"
+  bot_token: "replace-with-env-TELEGRAM_BOT_TOKEN"
 
 ib_gateway:
   host: "127.0.0.1"

@@ -56,6 +56,8 @@ class PriceWalker(Skill):
 
             if age_s > _STALE_QUOTE_THRESHOLD_S:
                 reason = "stale_quote"
+                if trade is not None:
+                    await self._gateway.cancel_order(trade, timeout=_CANCEL_WAIT_TIMEOUT_S)
                 await self._mark_cancelled(intent_id, reason)
                 return SkillResult(status="skip", reason=f"cancelled_unfilled: {reason}",
                                    updates=self._terminal_updates(attempt_count, last_limit_price))
@@ -63,6 +65,8 @@ class PriceWalker(Skill):
             raw_limit = ask * (1.0 + step_buffer)
             if raw_limit > max_chase_price:
                 reason = "price_exceeded_cap"
+                if trade is not None:
+                    await self._gateway.cancel_order(trade, timeout=_CANCEL_WAIT_TIMEOUT_S)
                 await self._mark_cancelled(intent_id, reason)
                 return SkillResult(status="skip", reason=f"cancelled_unfilled: {reason}",
                                    updates=self._terminal_updates(attempt_count, last_limit_price))
@@ -80,7 +84,7 @@ class PriceWalker(Skill):
             idempotency_key = f"{ctx.trace_id}:PriceWalker:{ctx.event_id}:step{step_idx}"
             submitted_at = datetime.now(timezone.utc).isoformat()
 
-            if order_submitted_at is None and intent_id:
+            if intent_id:
                 await self._store.update_outbox_status(intent_id, "pending")
 
             try:
@@ -107,6 +111,12 @@ class PriceWalker(Skill):
                         max_chase_price=max_chase_price,
                         initial_reference_ask=initial_reference_ask,
                     )
+            elif intent_id:
+                await self._store.update_execution_state(
+                    intent_id,
+                    order_attempt_count=attempt_count,
+                    last_limit_price=limit_price,
+                )
 
             deadline = asyncio.get_event_loop().time() + reprice_interval_s
             filled = False
@@ -143,8 +153,7 @@ class PriceWalker(Skill):
                     "last_limit_price": limit_price,
                 })
 
-            if step_idx < len(step_buffers) - 1:
-                await self._gateway.cancel_order(trade, timeout=_CANCEL_WAIT_TIMEOUT_S)
+            await self._gateway.cancel_order(trade, timeout=_CANCEL_WAIT_TIMEOUT_S)
 
         reason = "walk_exhausted"
         await self._mark_cancelled(intent_id, reason)

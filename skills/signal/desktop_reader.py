@@ -15,7 +15,8 @@ from agent.skill import Skill
 logger = logging.getLogger(__name__)
 
 _AX_MIN_LENGTH = 40
-_SCREENSHOT_TIMEOUT_S = 1.0
+_SCREENSHOT_CAPTURE_TIMEOUT_S = 3.0
+_LLM_EXTRACT_TIMEOUT_S = 15.0
 _NAV_PATTERNS = ("Stock Talk Insiders", "丨", "#")
 
 
@@ -62,7 +63,7 @@ class DesktopReader(Skill):
         try:
             image_data = await asyncio.wait_for(
                 loop.run_in_executor(None, self._capture_message_pane),
-                timeout=_SCREENSHOT_TIMEOUT_S,
+                timeout=_SCREENSHOT_CAPTURE_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
             raise Exception("screenshot_timeout")
@@ -81,7 +82,7 @@ class DesktopReader(Skill):
                     ],
                 }],
             ),
-            timeout=_SCREENSHOT_TIMEOUT_S,
+            timeout=_LLM_EXTRACT_TIMEOUT_S,
         )
         return response.content[0].text.strip(), "screenshot"
 

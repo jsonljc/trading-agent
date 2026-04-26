@@ -11,9 +11,10 @@ final class AXDiscordWatcher {
     private let emitter: SocketEmitter
     private let logPath: String
 
-    // Ring buffer — dedup across both modes
+    // Ring buffer — dedup across both modes. All accesses serialised through fingerprintQueue.
     private var seenFingerprints: [String] = []
     private let maxSeen = 200
+    private let fingerprintQueue = DispatchQueue(label: "ax.fingerprint.serial")
 
     init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String) {
         self.bundleId = bundleId
@@ -243,10 +244,12 @@ final class AXDiscordWatcher {
     }
 
     private func markSeen(_ fp: String) -> Bool {
-        guard !seenFingerprints.contains(fp) else { return false }
-        seenFingerprints.append(fp)
-        if seenFingerprints.count > maxSeen { seenFingerprints.removeFirst() }
-        return true
+        fingerprintQueue.sync {
+            guard !seenFingerprints.contains(fp) else { return false }
+            seenFingerprints.append(fp)
+            if seenFingerprints.count > maxSeen { seenFingerprints.removeFirst() }
+            return true
+        }
     }
 
     // MARK: - Emit + Log

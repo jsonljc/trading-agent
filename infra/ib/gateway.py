@@ -208,8 +208,12 @@ class IBGateway:
                 return 0.0, float("inf")
             td = tickers[0]
             ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
+            age_s = 0.0
+            if getattr(td, "time", None) is not None:
+                quote_time = td.time if td.time.tzinfo else td.time.replace(tzinfo=timezone.utc)
+                age_s = max(0.0, (datetime.now(timezone.utc) - quote_time).total_seconds())
             self._read_breaker._record_success()
-            return ask, 0.0
+            return ask, age_s
         except IBGatewayUnavailable:
             raise
         except Exception as exc:
