@@ -56,7 +56,20 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     )
 
     from infra.ib.gateway import IBGateway
-    gateway = IBGateway(policy)
+
+    async def _on_ib_disconnect() -> None:
+        try:
+            await telegram.send_message("⚠️ IB Gateway disconnected — reconnect loop started")
+        except Exception:
+            logger.exception("failed to send IB disconnect alert")
+
+    async def _on_ib_reconnect() -> None:
+        try:
+            await telegram.send_message("✅ IB Gateway reconnected")
+        except Exception:
+            logger.exception("failed to send IB reconnect alert")
+
+    gateway = IBGateway(policy, on_disconnect=_on_ib_disconnect, on_reconnect=_on_ib_reconnect)
     await gateway.connect()
 
     from agent.registry import build_phase1_chain, build_phase2b_execution_chain

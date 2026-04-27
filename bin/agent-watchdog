@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Silent-failure watchdog for the trading agent.
+
+Pages the user via Telegram if, during US Regular Trading Hours, the
+agent is loaded but no execution_audit_log row has been written in the
+recent window. Designed to be invoked every few minutes by launchd.
+
+Cooldown: a state file under data/ records the last alert time and
+prevents re-paging within ALERT_COOLDOWN_MIN.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
+
+REPO_DIR = Path(__file__).resolve().parent.parent
+LOG_PATH = REPO_DIR / "logs" / "watchdog.log"
+STATE_PATH = REPO_DIR / "data" / "watchdog_state.json"
+DB_PATH = REPO_DIR / "data" / "trading_agent.db"
+POLICY_PATH = REPO_DIR / "config" / "policy.yaml"
+ENV_PATH = REPO_DIR / ".env"
+
+AGENT_LABEL = "com.jasonli.trading-agent"
+QUIET_THRESHOLD_MIN = 30   # alert if no audit row in this many minutes
+ALERT_COOLDOWN_MIN = 30    # don't re-alert more than once per cooldown
+RTH_OPEN = time(9, 30)
+RTH_CLOSE = time(16, 0)
+
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=str(LOG_PATH),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s",
+)
+logger = logging.getLogger("watchdog")
+
+
+def now_et() -> datetime:
+    # America/New_York via zoneinfo (stdlib)
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
+def is_rth(dt: datetime) -> bool:
+    if dt.weekday() >= 5:  # Sat/Sun
+        return False
+    return RTH_OPEN <= dt.time() <= RTH_CLOSE
+
+
+def agent_pid() -> int | None:
+    """Return launchd-managed agent PID, or None if not running."""
+    try:
+        out = subprocess.check_output(["launchctl", "list", AGENT_LABEL], text=True)
+    except subprocess.CalledProcessError:
+        return None
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith('"PID"'):
+            # e.g.  "PID" = 12345;
+            digits = "".join(c for c in line if c.isdigit())
+            return int(digits) if digits else None
+    return None
+
+
+def last_audit_within(minutes: int) -> bool:
+    if not DB_PATH.exists():
+        return False
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM execution_audit_log WHERE created_at >= ?",
+            (cutoff,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] > 0
+
+
+def load_telegram_creds() -> tuple[str, str] | None:
+    """Read TELEGRAM_BOT_TOKEN from .env and chat_id from policy.yaml."""
+    token = None
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("TELEGRAM_BOT_TOKEN="):
+                token = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    if not token:
+        return None
+    chat_id = None
+    if POLICY_PATH.exists():
+        for line in POLICY_PATH.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("chat_id:"):
+                chat_id = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+                break
+    if not chat_id:
+        return None
+    return token, chat_id
+
+
+def send_telegram(text: str) -> bool:
+    creds = load_telegram_creds()
+    if not creds:
+        logger.error("Telegram creds unavailable; cannot send alert")
+        return False
+    token, chat_id = creds
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+    try:
+        with urllib.request.urlopen(url, data=data, timeout=10) as resp:
+            return resp.status == 200
+    except (urllib.error.URLError, OSError) as exc:
+        logger.error("Telegram send failed: %s", exc)
+        return False
+
+
+def load_state() -> dict:
+    if STATE_PATH.exists():
+        try:
+            return json.loads(STATE_PATH.read_text())
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(state))
+
+
+def in_cooldown(state: dict, now: datetime) -> bool:
+    last = state.get("last_alert_at")
+    if not last:
+        return False
+    last_dt = datetime.fromisoformat(last)
+    return (now - last_dt) < timedelta(minutes=ALERT_COOLDOWN_MIN)
+
+
+def main() -> int:
+    now_et_dt = now_et()
+    if not is_rth(now_et_dt):
+        logger.info("outside RTH (%s); skipping", now_et_dt.isoformat())
+        return 0
+
+    pid = agent_pid()
+    has_recent = last_audit_within(QUIET_THRESHOLD_MIN)
+    logger.info("RTH check: pid=%s recent_audit=%s", pid, has_recent)
+
+    if pid and has_recent:
+        return 0
+
+    if not pid:
+        msg = (
+            f"🚨 Trading agent NOT RUNNING during RTH ({now_et_dt:%H:%M ET}). "
+            f"launchctl reports no PID for {AGENT_LABEL}."
+        )
+    else:
+        msg = (
+            f"🚨 Trading agent quiet during RTH ({now_et_dt:%H:%M ET}): "
+            f"no execution_audit_log rows in last {QUIET_THRESHOLD_MIN} min. "
+            f"Agent pid={pid} but may be wedged."
+        )
+
+    state = load_state()
+    if in_cooldown(state, now_et_dt):
+        logger.info("alert suppressed by cooldown")
+        return 0
+
+    if send_telegram(msg):
+        state["last_alert_at"] = now_et_dt.isoformat()
+        save_state(state)
+        logger.warning("alert sent: %s", msg)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

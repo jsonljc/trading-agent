@@ -25,6 +25,7 @@ show() {
 echo "Status:"
 show com.jasonli.trading-bridge
 show com.jasonli.trading-agent
+show com.jasonli.trading-watchdog
 
 if [ -S /tmp/trading_bridge.sock ]; then
     echo "  socket /tmp/trading_bridge.sock: present"

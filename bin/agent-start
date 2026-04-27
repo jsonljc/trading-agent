@@ -7,6 +7,7 @@ set -euo pipefail
 launchctl start com.jasonli.trading-bridge
 sleep 1
 launchctl start com.jasonli.trading-agent
+launchctl start com.jasonli.trading-watchdog
 
-echo "started bridge + agent"
+echo "started bridge + agent + watchdog"
 exec "$(dirname "$0")/agent-status"
