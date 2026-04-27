@@ -5,7 +5,7 @@ import Foundation
 /// Dual-mode Discord AX bridge.
 /// Event mode: AXObserver callbacks on kAXValueChangedNotification.
 /// Reconciliation mode: 5-second sweep of visible message pane.
-final class AXDiscordWatcher {
+public final class AXDiscordWatcher {
     private let bundleId: String
     private let watchedChannels: Set<String>
     private let emitter: SocketEmitter
@@ -16,21 +16,21 @@ final class AXDiscordWatcher {
     private let maxSeen = 200
     private let fingerprintQueue = DispatchQueue(label: "ax.fingerprint.serial")
 
-    init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String) {
+    public init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String) {
         self.bundleId = bundleId
         self.watchedChannels = Set(watchedChannels.map { $0.lowercased() })
         self.emitter = SocketEmitter(socketPath: socketPath)
         self.logPath = logPath
     }
 
-    func triggerReconcile() {
+    public func triggerReconcile() {
         guard let app = NSRunningApplication
                 .runningApplications(withBundleIdentifier: bundleId).first else { return }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         reconcile(axApp: axApp)
     }
 
-    func start() {
+    public func start() {
         // Also poll window title every 0.5s — catches user clicking a notification banner
         var lastTitle = ""
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in

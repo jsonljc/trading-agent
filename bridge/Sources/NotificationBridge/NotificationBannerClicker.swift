@@ -4,17 +4,17 @@ import Foundation
 
 /// Watches for macOS notification banners from Discord and clicks them.
 /// Clicking navigates Discord to the channel that sent the notification.
-final class NotificationBannerClicker {
+public final class NotificationBannerClicker {
     private let discordBundleId: String
     private var lastWindowCount = 0
     private let onClicked: () -> Void
 
-    init(discordBundleId: String, onClicked: @escaping () -> Void) {
+    public init(discordBundleId: String, onClicked: @escaping () -> Void) {
         self.discordBundleId = discordBundleId
         self.onClicked = onClicked
     }
 
-    func start() {
+    public func start() {
         Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
             self?.poll()
         }

@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import NotificationBridgeCore
 setbuf(stdout, nil)  // unbuffered stdout so logs appear immediately
 
 let socketPath = CommandLine.arguments.count > 1
