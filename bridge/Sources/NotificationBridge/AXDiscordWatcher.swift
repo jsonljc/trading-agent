@@ -123,6 +123,7 @@ public final class AXDiscordWatcher {
 
         guard let msg = extractMessage(from: element) else { return }
         guard watchedChannels.contains(msg.channel) else { return }
+        guard !AXNoiseFilter.isNoise(channel: msg.channel, author: msg.author, body: msg.body) else { return }
         let fp = FingerprintDedup.make(channel: msg.channel, author: msg.author, body: msg.body)
         guard dedup.markSeen(fp) else { return }
         emit(channel: msg.channel, author: msg.author, body: msg.body, source: "ax_event")
@@ -145,6 +146,7 @@ public final class AXDiscordWatcher {
             guard !body.contains("丨") else { return }
             guard !body.hasPrefix("#") else { return }
             guard self.watchedChannels.contains(ch) else { return }
+            guard !AXNoiseFilter.isNoise(channel: ch, author: "reconcile", body: body) else { return }
             let fp = FingerprintDedup.make(channel: ch, author: "reconcile", body: body)
             guard self.dedup.markSeen(fp) else { return }
             self.emit(channel: ch, author: "reconcile", body: body, source: "reconciliation")
