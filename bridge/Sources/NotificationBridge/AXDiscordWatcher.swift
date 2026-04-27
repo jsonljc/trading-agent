@@ -11,13 +11,14 @@ public final class AXDiscordWatcher {
     private let emitter: SocketEmitter
     private let logPath: String
 
-    private let dedup = FingerprintDedup()
+    private let dedup: FingerprintDedup
 
-    public init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String) {
+    public init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String, dedup: FingerprintDedup) {
         self.bundleId = bundleId
         self.watchedChannels = Set(watchedChannels.map { $0.lowercased() })
         self.emitter = SocketEmitter(socketPath: socketPath)
         self.logPath = logPath
+        self.dedup = dedup
     }
 
     public func triggerReconcile() {
