@@ -6,11 +6,12 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    def __init__(self, skills: list[Skill], trace_store, on_skip=None, on_fail=None) -> None:
+    def __init__(self, skills: list[Skill], trace_store, on_skip=None, on_fail=None, on_success=None) -> None:
         self._skills = skills
         self._trace_store = trace_store
-        self._on_skip = on_skip   # async callable(ctx, reason)
-        self._on_fail = on_fail   # async callable(ctx, reason)
+        self._on_skip = on_skip       # async callable(ctx, reason)
+        self._on_fail = on_fail       # async callable(ctx, reason)
+        self._on_success = on_success # async callable(ctx)
 
     async def run(self, ctx: Context) -> Context:
         try:
@@ -38,6 +39,8 @@ class Orchestrator:
                     return ctx
 
             await self._trace_store.finish(ctx.trace_id, "success")
+            if self._on_success:
+                await self._on_success(ctx)
         except Exception as exc:
             reason = f"unhandled exception in pipeline: {exc}"
             logger.exception(reason)

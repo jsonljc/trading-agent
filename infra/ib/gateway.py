@@ -223,10 +223,7 @@ class IBGateway:
     async def get_account_summary(self) -> AccountSummary:
         self._read_breaker.check()
         try:
-            # accountSummary() reads ib_insync's cached account values (updated on connect)
-            summary = self._ib.accountSummary()
-            if not summary:
-                summary = await self._ib.reqAccountSummaryAsync()
+            summary = await self._ib.reqAccountSummaryAsync()
             values = {item.tag: item.value for item in summary}
             result = AccountSummary(
                 buying_power=float(values.get("BuyingPower", 0)),

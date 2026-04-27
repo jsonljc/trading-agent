@@ -10,7 +10,9 @@ Usage:
 """
 import asyncio
 import logging
+import logging.handlers
 import argparse
+import os
 import uuid
 
 from agent.policy import load_policy
@@ -26,7 +28,15 @@ from infra.telegram.client import TelegramClient
 from infra.bridge_client.socket_reader import SocketReader, TriggerEvent
 from infra.bridge_client.notification_poller import NotificationBannerPoller
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+os.makedirs("logs", exist_ok=True)
+_file_handler = logging.handlers.RotatingFileHandler(
+    "logs/agent.log", maxBytes=10_000_000, backupCount=5
+)
+_file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler])
 logger = logging.getLogger("main")
 
 
@@ -67,7 +77,12 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     async def on_skip(ctx: Context, reason: str) -> None:
         await audit_writer.write(ctx, "skipped")
 
-    orch = Orchestrator(full_chain, trace_store, on_skip=on_skip, on_fail=on_fail)
+    async def on_success(ctx: Context) -> None:
+        await audit_writer.write(ctx, "success")
+        if ctx.get("fill_status"):
+            await digest_skill.send_fill_digest(ctx)
+
+    orch = Orchestrator(full_chain, trace_store, on_skip=on_skip, on_fail=on_fail, on_success=on_success)
 
     async def handle_event(event: TriggerEvent) -> None:
         trace_id = str(uuid.uuid4())[:12]
@@ -95,9 +110,6 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         })
 
         await orch.run(ctx)
-        await audit_writer.write(ctx, "success")
-        if ctx.get("fill_status"):
-            await digest_skill.send_fill_digest(ctx)
 
     reconciler = ExecutionReconciler(
         gateway, execution_store, trade_intent_store,

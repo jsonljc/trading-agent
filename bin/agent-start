@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Start the trading bridge and agent (in that order).
+# Use after bin/agent-install.
+set -euo pipefail
+
+# Bridge first so the agent finds the socket as soon as it starts listening.
+launchctl start com.jasonli.trading-bridge
+sleep 1
+launchctl start com.jasonli.trading-agent
+
+echo "started bridge + agent"
+exec "$(dirname "$0")/agent-status"
