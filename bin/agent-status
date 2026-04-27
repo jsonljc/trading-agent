@@ -33,6 +33,16 @@ else
     echo "  socket /tmp/trading_bridge.sock: ABSENT"
 fi
 
+# Probe for Full Disk Access by attempting to read the notification DB.
+NOTIF_DB="$HOME/Library/Application Support/com.apple.notificationcenter/db2/db"
+if [ ! -r "$NOTIF_DB" ]; then
+    echo
+    echo "  ⚠️  Full Disk Access NOT granted to the bridge."
+    echo "     The new NotificationDBPoller requires reading $NOTIF_DB"
+    echo "     Open System Settings → Privacy & Security → Full Disk Access"
+    echo "     and enable NotificationBridge (or Terminal/iTerm if launching by hand)."
+fi
+
 if [ ! -f "$REPO_DIR/data/.market_data_subscribed" ]; then
     echo
     echo "  ⚠️  IB market data subscriptions NOT marked active."
