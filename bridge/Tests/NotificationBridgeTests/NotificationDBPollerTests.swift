@@ -34,6 +34,24 @@ final class NotificationDBPollerTests: XCTestCase {
         XCTAssertEqual(records[0].subtitle, "#mystic")
     }
 
+    func test_pollNew_advancesLastSeenIdAcrossCalls() {
+        let poller = NotificationDBPoller(
+            dbPath: dbPath,
+            watchedChannels: ["mystic"],
+            emitter: nil,
+            dedup: FingerprintDedup(),
+            startingRecId: 0
+        )
+        let rec1 = insertDiscordRow(bundleId: "com.hnc.Discord", title: "S", subtitle: "#mystic", body: "A: msg1")
+        XCTAssertEqual(poller.pollNew().count, 1)
+        XCTAssertEqual(poller.pollNew().count, 0, "second call should pick up nothing new")
+        let rec2 = insertDiscordRow(bundleId: "com.hnc.Discord", title: "S", subtitle: "#mystic", body: "B: msg2")
+        XCTAssertGreaterThan(rec2, rec1)
+        let next = poller.pollNew()
+        XCTAssertEqual(next.count, 1)
+        XCTAssertEqual(next[0].body, "B: msg2")
+    }
+
     func test_processRecord_emitsParsedSignal() {
         let captured = CapturingEmitter()
         let poller = NotificationDBPoller(

@@ -19,6 +19,9 @@ public struct NotificationRecord {
     }
 }
 
+/// Not thread-safe. Call `start()` once from the main thread; the timer
+/// invokes `tick()` on the same run loop. Do not call `pollNew()` or
+/// `process(_:)` concurrently from other threads.
 public final class NotificationDBPoller {
     private let dbPath: String
     private let watchedChannels: Set<String>
