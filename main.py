@@ -26,7 +26,6 @@ from infra.storage.signal_store import SignalStore
 from infra.storage.execution_store import ExecutionStore
 from infra.telegram.client import TelegramClient
 from infra.bridge_client.socket_reader import SocketReader, TriggerEvent
-from infra.bridge_client.notification_poller import NotificationBannerPoller
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 os.makedirs("logs", exist_ok=True)
@@ -132,7 +131,6 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     reader = SocketReader(socket_path)
     logger.info("Trading agent Phase 2b ready. Listening on %s", socket_path)
     try:
-        NotificationBannerPoller().start()
         reconciler.start()
         await reader.start(handle_event)
     finally:
