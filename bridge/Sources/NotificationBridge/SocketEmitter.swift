@@ -1,13 +1,20 @@
 import Foundation
+import Darwin
 
-class SocketEmitter {
+/// Anything that can emit a signal as a flat string-string dictionary
+/// over the bridge's transport (Unix socket in production, captured in memory for tests).
+public protocol SignalEmitter {
+    func emit(_ event: [String: String])
+}
+
+public class SocketEmitter: SignalEmitter {
     private let socketPath: String
 
-    init(socketPath: String) {
+    public init(socketPath: String) {
         self.socketPath = socketPath
     }
 
-    func emit(_ event: [String: String]) {
+    public func emit(_ event: [String: String]) {
         guard let data = try? JSONSerialization.data(withJSONObject: event),
               var jsonString = String(data: data, encoding: .utf8) else { return }
         jsonString += "\n"
