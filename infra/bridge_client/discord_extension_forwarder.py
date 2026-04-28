@@ -23,4 +23,13 @@ def map_channel(channel_id: Optional[str], channel_map: dict[str, str]) -> Optio
 def build_envelope(channel: str, author: str, content: str, message_id: str,
                    received_at: Optional[str] = None) -> dict:
     """Build the bridge-socket envelope the agent's SocketReader expects."""
-    raise NotImplementedError  # filled in by Task 3
+    if received_at is None:
+        received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return {
+        "event_id": f"discord_ext:{message_id}",
+        "source": "discord_ext",
+        "channel": channel,
+        "author": author,
+        "trigger_preview": content,
+        "received_at": received_at,
+    }
