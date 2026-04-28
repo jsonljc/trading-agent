@@ -3,11 +3,13 @@
 # Use after bin/agent-install.
 set -euo pipefail
 
-# Bridge first so the agent finds the socket as soon as it starts listening.
-launchctl start com.jasonli.trading-bridge
-sleep 1
+# Agent first so the bridge socket exists when the bridge / forwarder
+# try to connect as clients.
 launchctl start com.jasonli.trading-agent
+sleep 1
+launchctl start com.jasonli.trading-bridge
+launchctl start com.jasonli.trading-extension-forwarder
 launchctl start com.jasonli.trading-watchdog
 
-echo "started bridge + agent + watchdog"
+echo "started agent + bridge + extension-forwarder + watchdog"
 exec "$(dirname "$0")/agent-status"

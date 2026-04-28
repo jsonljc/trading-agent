@@ -3,10 +3,12 @@
 # use bin/agent-uninstall for that.
 set -euo pipefail
 
-# Agent first so it cleanly closes the socket before the bridge tries to write.
+# Stop clients (bridge, forwarder, watchdog) first; agent last so the socket
+# stays alive until everyone has finished writing.
 launchctl stop com.jasonli.trading-watchdog || true
-launchctl stop com.jasonli.trading-agent || true
+launchctl stop com.jasonli.trading-extension-forwarder || true
 launchctl stop com.jasonli.trading-bridge || true
+launchctl stop com.jasonli.trading-agent || true
 
-echo "stopped bridge + agent + watchdog"
+echo "stopped agent + bridge + extension-forwarder + watchdog"
 exec "$(dirname "$0")/agent-status"

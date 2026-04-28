@@ -3,7 +3,7 @@
 set -euo pipefail
 
 TARGET_DIR="$HOME/Library/LaunchAgents"
-for label in com.jasonli.trading-agent com.jasonli.trading-bridge com.jasonli.trading-watchdog; do
+for label in com.jasonli.trading-agent com.jasonli.trading-bridge com.jasonli.trading-watchdog com.jasonli.trading-extension-forwarder; do
     dst="$TARGET_DIR/${label}.plist"
     if [ -f "$dst" ]; then
         launchctl unload "$dst" 2>/dev/null || true
