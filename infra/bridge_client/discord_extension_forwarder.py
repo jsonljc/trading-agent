@@ -181,3 +181,33 @@ async def run_forwarder(host: str, port: int, socket_path: str,
         httpd.server_close()
         thread.join(timeout=2)
         await client.close()
+
+
+def main() -> None:
+    import argparse
+    from agent.policy import load_policy
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--policy", default="config/policy.yaml")
+    parser.add_argument("--socket", default="/tmp/trading_bridge.sock")
+    parser.add_argument("--host", default="127.0.0.1")
+    args = parser.parse_args()
+
+    policy = load_policy(args.policy)
+    cfg = policy.discord_extension
+
+    asyncio.run(run_forwarder(
+        host=args.host,
+        port=cfg.forwarder_port,
+        socket_path=args.socket,
+        channel_map=cfg.channel_id_map,
+    ))
+
+
+if __name__ == "__main__":
+    main()
