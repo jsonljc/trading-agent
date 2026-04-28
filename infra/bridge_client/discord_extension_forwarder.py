@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections import deque
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -99,11 +101,7 @@ class BridgeSocketClient:
                 self._writer = None
 
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import threading
-
-
-def _make_handler(channel_map: dict[str, str], client: "BridgeSocketClient",
+def _make_handler(channel_map: dict[str, str], client: BridgeSocketClient,
                   loop: asyncio.AbstractEventLoop):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -152,6 +150,11 @@ def _make_handler(channel_map: dict[str, str], client: "BridgeSocketClient",
                 fut.result(timeout=1.0)
             except Exception:
                 logger.exception("Failed to forward envelope")
+                # Fix #2: cancel the orphaned coroutine so it doesn't pile up
+                # holding the BridgeSocketClient lock under sustained backpressure.
+                fut.cancel()
+                self._respond(503)
+                return
             self._respond(204)
     return Handler
 
@@ -172,7 +175,9 @@ async def run_forwarder(host: str, port: int, socket_path: str,
     except asyncio.CancelledError:
         pass
     finally:
-        httpd.shutdown()
+        # Run blocking shutdown off the event loop so in-flight handlers
+        # awaiting client.send() via run_coroutine_threadsafe can complete.
+        await loop.run_in_executor(None, httpd.shutdown)
         httpd.server_close()
         thread.join(timeout=2)
         await client.close()
