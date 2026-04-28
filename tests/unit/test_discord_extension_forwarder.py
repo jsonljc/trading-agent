@@ -53,3 +53,66 @@ def test_build_envelope_preserves_full_content():
         channel="mystic", author="Mystic", content=long_body, message_id="1",
     )
     assert env["trigger_preview"] == long_body  # no truncation
+
+
+import asyncio
+import os
+import tempfile
+import json as _json
+
+
+async def _accept_one_line(socket_path: str, out: list):
+    server = await asyncio.start_unix_server(
+        lambda r, w: _read_line(r, w, out), path=socket_path
+    )
+    async with server:
+        await asyncio.sleep(0.5)
+
+
+async def _read_line(reader, writer, out):
+    data = await reader.readline()
+    out.append(data.decode())
+    writer.close()
+
+
+async def test_bridge_socket_client_writes_one_line():
+    from infra.bridge_client.discord_extension_forwarder import BridgeSocketClient
+
+    fd, path = tempfile.mkstemp(suffix=".sock", dir="/tmp")
+    os.close(fd)
+    os.unlink(path)
+
+    out: list[str] = []
+    server_task = asyncio.create_task(_accept_one_line(path, out))
+    await asyncio.sleep(0.1)
+
+    client = BridgeSocketClient(path)
+    await client.send({"event_id": "x", "source": "discord_ext", "channel": "mystic",
+                        "author": "a", "trigger_preview": "p", "received_at": "t"})
+    await asyncio.sleep(0.2)
+    server_task.cancel()
+    try:
+        await server_task
+    except asyncio.CancelledError:
+        pass
+
+    assert len(out) == 1
+    parsed = _json.loads(out[0])
+    assert parsed["channel"] == "mystic"
+    assert out[0].endswith("\n")
+
+
+async def test_bridge_socket_client_buffers_when_socket_missing(tmp_path):
+    from infra.bridge_client.discord_extension_forwarder import BridgeSocketClient
+
+    missing_path = "/tmp/does_not_exist_yet_xyz.sock"
+    try:
+        os.unlink(missing_path)
+    except FileNotFoundError:
+        pass
+
+    client = BridgeSocketClient(missing_path)
+    # Should not raise; should buffer.
+    await client.send({"event_id": "1", "source": "discord_ext", "channel": "mystic",
+                        "author": "a", "trigger_preview": "p", "received_at": "t"})
+    assert client.buffered_count() == 1
