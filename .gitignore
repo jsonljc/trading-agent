@@ -7,6 +7,7 @@ data/trading_agent.db-wal
 data/trading_agent.db.bak.*
 data/ax_events.log
 data/exports/*.jsonl
+data/watchdog_state.json
 bridge/data/
 config/secrets.yaml
 .DS_Store
