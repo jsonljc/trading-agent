@@ -71,3 +71,17 @@ async def test_missing_ticker_returns_fail():
     result = await skill.run(ctx)
     assert result.status == "fail"
     store.insert.assert_not_called()
+
+
+async def test_unknown_intent_fails_rather_than_silently_defaulting_to_long():
+    """If an intent we don't recognise reaches TradeIntentWriter, we must
+    fail rather than silently coerce to 'long'. Otherwise a future
+    SHORT_SIGNAL or unhandled intent value writes a long trade against
+    the wrong direction."""
+    store = _store()
+    skill = TradeIntentWriter(store)
+    ctx = _ctx(intent="SHORT_SIGNAL")
+    result = await skill.run(ctx)
+    assert result.status == "fail", f"unknown intent must fail, got {result.status}"
+    assert "intent" in (result.reason or "").lower()
+    store.insert.assert_not_called()
