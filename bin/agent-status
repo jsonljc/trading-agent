@@ -33,14 +33,36 @@ else
     echo "  socket /tmp/trading_bridge.sock: ABSENT"
 fi
 
-# Probe for Full Disk Access by attempting to read the notification DB.
-NOTIF_DB="$HOME/Library/Application Support/com.apple.notificationcenter/db2/db"
-if [ ! -r "$NOTIF_DB" ]; then
-    echo
-    echo "  ⚠️  Full Disk Access NOT granted to the bridge."
-    echo "     The new NotificationDBPoller requires reading $NOTIF_DB"
-    echo "     Open System Settings → Privacy & Security → Full Disk Access"
-    echo "     and enable NotificationBridge (or Terminal/iTerm if launching by hand)."
+# Probe for active macOS Focus / DND. Active focus silences notifications,
+# which means Discord banners never reach the notification DB and the bridge
+# captures nothing.
+FOCUS_PROBE="$REPO_DIR/.venv/bin/python"
+if [ -x "$FOCUS_PROBE" ]; then
+    active_focus=$("$FOCUS_PROBE" - <<'EOF' 2>/dev/null
+import json, pathlib
+p = pathlib.Path.home() / "Library/DoNotDisturb/DB/Assertions.json"
+try:
+    data = json.loads(p.read_text())
+except Exception:
+    print("")
+    raise SystemExit
+for entry in data.get("data", []):
+    invalidated = {x.get("invalidationAssertion", {}).get("assertionUUID")
+                   for x in entry.get("storeInvalidationRecords", [])}
+    for r in entry.get("storeAssertionRecords", []):
+        if r.get("assertionUUID") not in invalidated:
+            mode = r.get("assertionDetails", {}).get("assertionDetailsModeIdentifier", "?")
+            print(mode)
+            raise SystemExit
+EOF
+)
+    if [ -n "$active_focus" ]; then
+        echo
+        echo "  ⚠️  Focus mode ACTIVE: $active_focus"
+        echo "     macOS suppresses notifications while Focus is on — Discord banners will not"
+        echo "     reach the notification DB and the bridge will capture nothing."
+        echo "     Turn off Focus via the menu bar Control Center → Focus tile."
+    fi
 fi
 
 if [ ! -f "$REPO_DIR/data/.market_data_subscribed" ]; then

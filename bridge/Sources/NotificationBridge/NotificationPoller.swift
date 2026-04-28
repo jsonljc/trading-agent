@@ -39,7 +39,7 @@ public final class NotificationDBPoller {
             self.dbPath = dbPath
         } else {
             let home = FileManager.default.homeDirectoryForCurrentUser.path
-            self.dbPath = "\(home)/Library/Application Support/com.apple.notificationcenter/db2/db"
+            self.dbPath = "\(home)/Library/Group Containers/group.com.apple.usernoted/db2/db"
         }
         self.watchedChannels = Set(watchedChannels)
         self.emitter = emitter
@@ -93,17 +93,16 @@ public final class NotificationDBPoller {
     /// Filter, parse, dedup, emit. Public for testability.
     public func process(_ record: NotificationRecord) {
         guard record.appBundleId == "com.hnc.Discord" else { return }
-        guard let channel = ChannelNameParser.parse(record.subtitle) else { return }
-        guard watchedChannels.contains(channel) else { return }
-        let parsed = MessageBodyParser.parse(record.body)
-        let fp = FingerprintDedup.make(channel: channel, author: parsed.author, body: parsed.message)
+        guard let parsed = DiscordTitleParser.parse(record.title) else { return }
+        guard watchedChannels.contains(parsed.channel) else { return }
+        let fp = FingerprintDedup.make(channel: parsed.channel, author: parsed.author, body: record.body)
         guard dedup.markSeen(fp) else { return }
         let event: [String: String] = [
             "event_id": UUID().uuidString,
             "source": "notif_db",
-            "channel": channel,
+            "channel": parsed.channel,
             "author": parsed.author,
-            "trigger_preview": parsed.message,
+            "trigger_preview": record.body,
             "received_at": ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: record.deliveredDate + 978307200)),
         ]
         emitter?.emit(event)
@@ -113,10 +112,21 @@ public final class NotificationDBPoller {
 
     private static func currentMaxRecId(dbPath: String) -> Int64 {
         var db: OpaquePointer?
-        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return 0 }
+        let openResult = sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil)
+        guard openResult == SQLITE_OK else {
+            let errMsg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "<no handle>"
+            FileHandle.standardError.write(Data("ERROR: sqlite3_open_v2 failed (rc=\(openResult)): \(errMsg) path=\(dbPath)\n".utf8))
+            sqlite3_close(db)
+            return 0
+        }
         defer { sqlite3_close(db) }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT COALESCE(MAX(rec_id), 0) FROM record", -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        let prepResult = sqlite3_prepare_v2(db, "SELECT COALESCE(MAX(rec_id), 0) FROM record", -1, &stmt, nil)
+        guard prepResult == SQLITE_OK else {
+            let errMsg = String(cString: sqlite3_errmsg(db))
+            FileHandle.standardError.write(Data("ERROR: sqlite3_prepare_v2 failed (rc=\(prepResult)): \(errMsg)\n".utf8))
+            return 0
+        }
         defer { sqlite3_finalize(stmt) }
         if sqlite3_step(stmt) == SQLITE_ROW {
             return sqlite3_column_int64(stmt, 0)
@@ -125,13 +135,18 @@ public final class NotificationDBPoller {
     }
 
     private static func decodeRecord(recId: Int64, deliveredDate: Double, data: Data) -> NotificationRecord? {
-        guard let decoded = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data),
-              let dict = decoded as? NSDictionary,
-              let req = dict["req"] as? NSDictionary else { return nil }
-        let bundleId = (req["sid"] as? String) ?? ""
-        let title = (req["titl"] as? String) ?? ""
-        let subtitle = (req["subt"] as? String) ?? ""
-        let body = (req["body"] as? String) ?? ""
+        // The macOS notification DB stores each row as a plain binary plist
+        // (NOT an NSKeyedArchiver archive). Decode with PropertyListSerialization.
+        guard let decoded = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dict = decoded as? NSDictionary else { return nil }
+        // macOS notification DB schema: bundle id is the OUTER `app` key,
+        // and the human-facing fields live in the inner `req` dict under `titl` / `body`.
+        // There is no `subt` / `sid` in this schema (despite older docs).
+        let bundleId = (dict["app"] as? String) ?? ""
+        let req = dict["req"] as? NSDictionary
+        let title = (req?["titl"] as? String) ?? ""
+        let subtitle = (req?["subt"] as? String) ?? ""  // unused for Discord but kept for future apps
+        let body = (req?["body"] as? String) ?? ""
         return NotificationRecord(
             recId: recId, deliveredDate: deliveredDate,
             appBundleId: bundleId, title: title, subtitle: subtitle, body: body

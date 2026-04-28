@@ -64,9 +64,9 @@ final class NotificationDBPollerTests: XCTestCase {
         let rec = NotificationRecord(
             recId: 1, deliveredDate: 0,
             appBundleId: "com.hnc.Discord",
-            title: "Stock Talk Insiders",
-            subtitle: "#mystic",
-            body: "Author: msg body"
+            title: "Author (#mystic, Stock Talk Insiders)",
+            subtitle: "",
+            body: "msg body"
         )
         poller.process(rec)
         XCTAssertEqual(captured.events.count, 1)
@@ -88,9 +88,9 @@ final class NotificationDBPollerTests: XCTestCase {
         let rec = NotificationRecord(
             recId: 1, deliveredDate: 0,
             appBundleId: "com.hnc.Discord",
-            title: "Stock Talk Insiders",
-            subtitle: "#friends",
-            body: "Author: not a watched channel"
+            title: "Author (#friends, Stock Talk Insiders)",
+            subtitle: "",
+            body: "not a watched channel"
         )
         poller.process(rec)
         XCTAssertTrue(captured.events.isEmpty)
@@ -108,9 +108,9 @@ final class NotificationDBPollerTests: XCTestCase {
         let rec = NotificationRecord(
             recId: 1, deliveredDate: 0,
             appBundleId: "com.apple.Mail",
-            title: "Inbox",
-            subtitle: "#mystic",
-            body: "Author: same channel name but different app"
+            title: "Author (#mystic, server)",
+            subtitle: "",
+            body: "same channel name but different app"
         )
         poller.process(rec)
         XCTAssertTrue(captured.events.isEmpty)
@@ -129,9 +129,9 @@ final class NotificationDBPollerTests: XCTestCase {
         let rec = NotificationRecord(
             recId: 1, deliveredDate: 0,
             appBundleId: "com.hnc.Discord",
-            title: "Stock Talk Insiders",
-            subtitle: "#mystic",
-            body: "Author: msg"
+            title: "Author (#mystic, server)",
+            subtitle: "",
+            body: "msg"
         )
         poller.process(rec)
         poller.process(rec)
@@ -159,9 +159,12 @@ final class NotificationDBPollerTests: XCTestCase {
         sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READWRITE, nil)
         defer { sqlite3_close(db) }
 
-        let req: NSDictionary = ["sid": bundleId, "titl": title, "subt": subtitle, "body": body]
-        let outer: NSDictionary = ["req": req]
-        let blob = try! NSKeyedArchiver.archivedData(withRootObject: outer, requiringSecureCoding: false)
+        // Match the real macOS notification DB shape: bundle id at OUTER level
+        // under `app`; title / body in inner `req` dict. Stored as a plain
+        // binary plist (NOT NSKeyedArchiver), matching the on-disk format.
+        let req: NSDictionary = ["titl": title, "subt": subtitle, "body": body]
+        let outer: NSDictionary = ["app": bundleId, "req": req]
+        let blob = try! PropertyListSerialization.data(fromPropertyList: outer, format: .binary, options: 0)
 
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, "INSERT INTO record (data, delivered_date) VALUES (?, ?)", -1, &stmt, nil)
