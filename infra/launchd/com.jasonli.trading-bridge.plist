@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jasonli.trading-bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jasonli/dev/trading-agent/bridge/.build/debug/NotificationBridge</string>
+        <string>/tmp/trading_bridge.sock</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jasonli/dev/trading-agent/bridge</string>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/jasonli/dev/trading-agent/logs/bridge.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jasonli/dev/trading-agent/logs/bridge.stderr.log</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

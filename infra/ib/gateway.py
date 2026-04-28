@@ -49,14 +49,21 @@ class _CircuitBreaker:
             raise IBGatewayUnavailable("circuit open")
 
 
+_RECONNECT_BACKOFF_SECONDS = (5, 10, 30, 60, 60)
+
+
 class IBGateway:
-    def __init__(self, policy) -> None:
+    def __init__(self, policy, on_disconnect=None, on_reconnect=None) -> None:
         self._policy = policy
         self._ib = None
         self._connected = False
         self._account_id: str | None = None
         self._read_breaker = _CircuitBreaker()
         self._write_breaker = _CircuitBreaker()
+        self._on_disconnect = on_disconnect  # async callable() — fired once per drop
+        self._on_reconnect = on_reconnect    # async callable() — fired once per recovery
+        self._reconnect_task: asyncio.Task | None = None
+        self._intentional_disconnect = False
 
     async def connect(self) -> None:
         from ib_insync import IB
@@ -68,12 +75,45 @@ class IBGateway:
         accounts = self._ib.managedAccounts()
         self._account_id = accounts[0] if accounts else None
         self._connected = True
+        self._intentional_disconnect = False
+        self._ib.disconnectedEvent += self._handle_disconnected
         logger.info("Connected to IB Gateway. Account: %s", self._account_id)
 
     async def disconnect(self) -> None:
+        self._intentional_disconnect = True
         if self._ib and self._connected:
             self._ib.disconnect()
             self._connected = False
+
+    def _handle_disconnected(self) -> None:
+        if self._intentional_disconnect:
+            return
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+        self._connected = False
+        logger.warning("IB Gateway disconnected unexpectedly; starting reconnect loop")
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+
+    async def _reconnect_loop(self) -> None:
+        if self._on_disconnect:
+            try:
+                await self._on_disconnect()
+            except Exception:
+                logger.exception("on_disconnect notifier failed")
+        for delay in _RECONNECT_BACKOFF_SECONDS:
+            await asyncio.sleep(delay)
+            try:
+                await self.connect()
+                logger.info("IB Gateway reconnect succeeded")
+                if self._on_reconnect:
+                    try:
+                        await self._on_reconnect()
+                    except Exception:
+                        logger.exception("on_reconnect notifier failed")
+                return
+            except Exception as exc:
+                logger.warning("Reconnect attempt failed: %s", exc)
+        logger.error("IB Gateway reconnect gave up after %d attempts", len(_RECONNECT_BACKOFF_SECONDS))
 
     async def qualify(self, contract_ref: BrokerContractRef) -> BrokerContractRef:
         self._read_breaker.check()
@@ -223,10 +263,7 @@ class IBGateway:
     async def get_account_summary(self) -> AccountSummary:
         self._read_breaker.check()
         try:
-            # accountSummary() reads ib_insync's cached account values (updated on connect)
-            summary = self._ib.accountSummary()
-            if not summary:
-                summary = await self._ib.reqAccountSummaryAsync()
+            summary = await self._ib.reqAccountSummaryAsync()
             values = {item.tag: item.value for item in summary}
             result = AccountSummary(
                 buying_power=float(values.get("BuyingPower", 0)),

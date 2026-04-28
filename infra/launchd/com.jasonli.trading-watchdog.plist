@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jasonli.trading-watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jasonli/dev/trading-agent/.venv/bin/python</string>
+        <string>/Users/jasonli/dev/trading-agent/bin/agent-watchdog</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jasonli/dev/trading-agent</string>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/jasonli/dev/trading-agent/logs/watchdog.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jasonli/dev/trading-agent/logs/watchdog.stderr.log</string>
+</dict>
+</plist>

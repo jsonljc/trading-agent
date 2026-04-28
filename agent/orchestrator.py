@@ -6,11 +6,12 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    def __init__(self, skills: list[Skill], trace_store, on_skip=None, on_fail=None) -> None:
+    def __init__(self, skills: list[Skill], trace_store, on_skip=None, on_fail=None, on_success=None) -> None:
         self._skills = skills
         self._trace_store = trace_store
-        self._on_skip = on_skip   # async callable(ctx, reason)
-        self._on_fail = on_fail   # async callable(ctx, reason)
+        self._on_skip = on_skip       # async callable(ctx, reason)
+        self._on_fail = on_fail       # async callable(ctx, reason)
+        self._on_success = on_success # async callable(ctx)
 
     async def run(self, ctx: Context) -> Context:
         try:
@@ -43,5 +44,16 @@ class Orchestrator:
             logger.exception(reason)
             await self._trace_store.finish(ctx.trace_id, "failed", reason)
             if self._on_fail:
-                await self._on_fail(ctx, reason)
+                try:
+                    await self._on_fail(ctx, reason)
+                except Exception:
+                    logger.exception("on_fail callback itself failed")
+            return ctx
+        # on_success runs OUTSIDE the try so a hiccup here (e.g. audit DB
+        # locked) does not retroactively mislabel a successful run as failed.
+        if self._on_success:
+            try:
+                await self._on_success(ctx)
+            except Exception:
+                logger.exception("on_success callback failed (pipeline already succeeded)")
         return ctx

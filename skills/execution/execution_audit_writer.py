@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 import json
 import uuid
 import logging
@@ -6,6 +7,19 @@ from datetime import datetime, timezone
 from agent.context import Context
 
 logger = logging.getLogger(__name__)
+
+
+def _json_default(o):
+    if dataclasses.is_dataclass(o):
+        return dataclasses.asdict(o)
+    if hasattr(o, "model_dump"):
+        return o.model_dump()
+    if hasattr(o, "dict") and callable(o.dict):
+        try:
+            return o.dict()
+        except Exception:
+            pass
+    return repr(o)
 
 
 class ExecutionAuditWriter:
@@ -23,7 +37,7 @@ class ExecutionAuditWriter:
                 ctx.get("execution_id"),
                 ctx.get("signal_id", ctx.event_id),
                 ctx.trace_id,
-                json.dumps(dict(ctx.data)),
+                json.dumps(dict(ctx.data), default=_json_default),
                 pipeline_outcome,
                 datetime.now(timezone.utc).isoformat(),
             ),

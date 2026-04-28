@@ -2,7 +2,12 @@ __pycache__/
 *.pyc
 .env
 data/trading_agent.db
+data/trading_agent.db-shm
+data/trading_agent.db-wal
+data/trading_agent.db.bak.*
+data/ax_events.log
 data/exports/*.jsonl
+bridge/data/
 config/secrets.yaml
 .DS_Store
 bridge/.build/
@@ -16,3 +21,4 @@ bridge/*.xcodeproj/xcuserdata/
 *.swp
 *.swo
 .worktrees/
+logs/

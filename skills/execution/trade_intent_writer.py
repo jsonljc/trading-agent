@@ -21,7 +21,15 @@ class TradeIntentWriter(Skill):
         side = ctx.get("side")
         if not side:
             phase1_intent = ctx.get("intent", "")
-            side = "long" if phase1_intent in ("LONG_SIGNAL", "ADD_SIGNAL") else "long"
+            if phase1_intent in ("LONG_SIGNAL", "ADD_SIGNAL"):
+                side = "long"
+            else:
+                # Fail loudly rather than coerce: a SHORT_SIGNAL silently
+                # written as long would open a position in the wrong direction.
+                return SkillResult(
+                    status="fail",
+                    reason=f"trade_intent_writer: unknown intent {phase1_intent!r}; expected LONG_SIGNAL or ADD_SIGNAL",
+                )
 
         conviction = ctx.get("conviction") or ctx.get("conviction_bucket", "medium")
 

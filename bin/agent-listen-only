@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Passive socket listener for Discord signal verification.
+
+Runs the same Unix socket server that main.py would, but prints each
+event instead of running the trade pipeline. Use this to confirm the
+bridge is capturing Discord messages in watched channels without
+triggering any IB orders or LLM calls.
+
+Usage:
+    bin/agent-listen-only [--socket /tmp/trading_bridge.sock]
+
+Run the bridge in another terminal (or via launchd) before starting
+this. Stop with Ctrl-C.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+import sys
+from datetime import datetime
+
+# Ensure project root is on sys.path so we can import infra.* when run
+# directly via .venv/bin/python.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+async def main(socket_path: str) -> None:
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+
+    counter = {"n": 0}
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while not reader.at_eof():
+                line = await reader.readline()
+                if not line:
+                    continue
+                counter["n"] += 1
+                try:
+                    payload = json.loads(line.decode())
+                except Exception:
+                    print(f"[#{counter['n']}] UNPARSEABLE: {line!r}", flush=True)
+                    continue
+                ts = datetime.now().strftime("%H:%M:%S")
+                ch = payload.get("channel", "?")
+                author = payload.get("author", "?")
+                src = payload.get("source", "?")
+                preview = payload.get("trigger_preview", "")[:120]
+                print(f"[{ts}] #{counter['n']:>3} src={src} ch={ch} by={author}", flush=True)
+                print(f"        {preview}", flush=True)
+        except Exception as exc:
+            print(f"connection error: {exc}", flush=True, file=sys.stderr)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_unix_server(handle, path=socket_path)
+    print(f"listen-only mode active on {socket_path}", flush=True)
+    print("Bridge handles signal capture; this listener just prints what arrives.", flush=True)
+    print("Wait for or trigger a notification in a watched channel; events will print here.", flush=True)
+    print("-" * 60, flush=True)
+    async with server:
+        await server.serve_forever()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--socket", default="/tmp/trading_bridge.sock")
+    args = parser.parse_args()
+    try:
+        asyncio.run(main(args.socket))
+    except KeyboardInterrupt:
+        print("\nstopped.")

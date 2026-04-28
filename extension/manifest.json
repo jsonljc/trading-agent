@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Trading Agent — Discord Capture",
+  "version": "0.1.0",
+  "description": "Captures full message text from priority Discord channels and forwards to the local trading agent.",
+  "host_permissions": [
+    "https://discord.com/*",
+    "http://localhost:9876/*",
+    "http://127.0.0.1:9876/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/channels/*"],
+      "js": ["extract.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "128": "icons/icon-128.png"
+  }
+}

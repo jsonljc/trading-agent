@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Discord Extract Harness</title>
+<script src="../extract.js"></script>
+<style>
+  body { font-family: monospace; padding: 1em; }
+  .case { border: 1px solid #ccc; padding: 0.5em; margin: 0.5em 0; }
+  .pass { color: green; } .fail { color: red; font-weight: bold; }
+</style>
+<h1>Discord extraction tests</h1>
+<div id="out"></div>
+
+<!-- Saved Discord message DOM. Re-capture from a real Discord page if Discord
+     redesigns the selectors. -->
+<template id="case-text">
+  <li id="chat-messages-111111-987654321098765432">
+    <div>
+      <span class="username-h_Y3Us">Mystic</span>
+      <time datetime="2026-04-28T20:00:00.000Z">8:00 PM</time>
+      <div id="message-content-987654321098765432">OPEN $SHEN - long thesis here</div>
+    </div>
+  </li>
+</template>
+
+<template id="case-empty">
+  <li id="chat-messages-111111-1">
+    <div>
+      <span class="username-x">User</span>
+      <time datetime="2026-04-28T20:00:00.000Z">x</time>
+      <div id="message-content-1"></div>
+    </div>
+  </li>
+</template>
+
+<template id="case-not-message">
+  <li id="not-a-message">irrelevant</li>
+</template>
+
+<script>
+  function check(name, cond) {
+    const div = document.createElement("div");
+    div.className = "case " + (cond ? "pass" : "fail");
+    div.textContent = (cond ? "PASS  " : "FAIL  ") + name;
+    document.getElementById("out").appendChild(div);
+  }
+  function load(id) {
+    return document.getElementById(id).content.firstElementChild.cloneNode(true);
+  }
+
+  const a = DiscordExtract.extractMessage(load("case-text"));
+  check("text message id", a.message_id === "987654321098765432");
+  check("text message author", a.author === "Mystic");
+  check("text message content", a.content === "OPEN $SHEN - long thesis here");
+  check("text message timestamp", a.timestamp === "2026-04-28T20:00:00.000Z");
+
+  const b = DiscordExtract.extractMessage(load("case-empty"));
+  check("empty content returns empty string", b.content === "");
+
+  const c = DiscordExtract.extractMessage(load("case-not-message"));
+  check("non-message element returns null", c === null);
+
+  const d = DiscordExtract.channelIdFromUrl(
+    "https://discord.com/channels/123/456");
+  check("url parse channel_id", d.channel_id === "456" && d.server_id === "123");
+</script>

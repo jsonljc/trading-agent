@@ -5,32 +5,30 @@ import Foundation
 /// Dual-mode Discord AX bridge.
 /// Event mode: AXObserver callbacks on kAXValueChangedNotification.
 /// Reconciliation mode: 5-second sweep of visible message pane.
-final class AXDiscordWatcher {
+public final class AXDiscordWatcher {
     private let bundleId: String
     private let watchedChannels: Set<String>
     private let emitter: SocketEmitter
     private let logPath: String
 
-    // Ring buffer — dedup across both modes. All accesses serialised through fingerprintQueue.
-    private var seenFingerprints: [String] = []
-    private let maxSeen = 200
-    private let fingerprintQueue = DispatchQueue(label: "ax.fingerprint.serial")
+    private let dedup: FingerprintDedup
 
-    init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String) {
+    public init(bundleId: String, watchedChannels: [String], socketPath: String, logPath: String, dedup: FingerprintDedup) {
         self.bundleId = bundleId
         self.watchedChannels = Set(watchedChannels.map { $0.lowercased() })
         self.emitter = SocketEmitter(socketPath: socketPath)
         self.logPath = logPath
+        self.dedup = dedup
     }
 
-    func triggerReconcile() {
+    public func triggerReconcile() {
         guard let app = NSRunningApplication
                 .runningApplications(withBundleIdentifier: bundleId).first else { return }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         reconcile(axApp: axApp)
     }
 
-    func start() {
+    public func start() {
         // Also poll window title every 0.5s — catches user clicking a notification banner
         var lastTitle = ""
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -126,8 +124,9 @@ final class AXDiscordWatcher {
 
         guard let msg = extractMessage(from: element) else { return }
         guard watchedChannels.contains(msg.channel) else { return }
-        let fp = fingerprint(channel: msg.channel, author: msg.author, body: msg.body)
-        guard markSeen(fp) else { return }
+        guard !AXNoiseFilter.isNoise(channel: msg.channel, author: msg.author, body: msg.body) else { return }
+        let fp = FingerprintDedup.make(channel: msg.channel, author: msg.author, body: msg.body)
+        guard dedup.markSeen(fp) else { return }
         emit(channel: msg.channel, author: msg.author, body: msg.body, source: "ax_event")
     }
 
@@ -148,8 +147,9 @@ final class AXDiscordWatcher {
             guard !body.contains("丨") else { return }
             guard !body.hasPrefix("#") else { return }
             guard self.watchedChannels.contains(ch) else { return }
-            let fp = self.fingerprint(channel: ch, author: "reconcile", body: body)
-            guard self.markSeen(fp) else { return }
+            guard !AXNoiseFilter.isNoise(channel: ch, author: "reconcile", body: body) else { return }
+            let fp = FingerprintDedup.make(channel: ch, author: "reconcile", body: body)
+            guard self.dedup.markSeen(fp) else { return }
             self.emit(channel: ch, author: "reconcile", body: body, source: "reconciliation")
             seen += 1
         }
@@ -232,24 +232,6 @@ final class AXDiscordWatcher {
     private func stringValue(of element: AXUIElement) -> String? {
         (axAttribute(of: element, key: kAXValueAttribute as CFString) as? String)
             ?? (axAttribute(of: element, key: kAXTitleAttribute as CFString) as? String)
-    }
-
-    // MARK: - Dedup
-
-    private func fingerprint(channel: String, author: String, body: String) -> String {
-        let input = "\(channel):\(author):\(body.prefix(120))"
-        var h: UInt64 = 5381
-        for b in input.utf8 { h = h &* 31 &+ UInt64(b) }
-        return String(format: "%016llx", h)
-    }
-
-    private func markSeen(_ fp: String) -> Bool {
-        fingerprintQueue.sync {
-            guard !seenFingerprints.contains(fp) else { return false }
-            seenFingerprints.append(fp)
-            if seenFingerprints.count > maxSeen { seenFingerprints.removeFirst() }
-            return true
-        }
     }
 
     // MARK: - Emit + Log

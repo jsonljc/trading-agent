@@ -122,6 +122,32 @@ async def test_unhandled_exception_fires_on_fail():
     assert "boom" in received[0]
 
 
+async def test_on_success_exception_does_not_trigger_on_fail():
+    """A pipeline that succeeded must not be reported as failed because
+    on_success itself raised. Otherwise audit_writer.write hiccups would
+    mislabel real fills as failures and page the operator."""
+    class OkSkill(Skill):
+        name = "ok"
+        async def run(self, ctx):
+            return SkillResult(status="success")
+
+    store = FakeTraceStore()
+    fails: list = []
+    async def on_success(ctx):
+        raise RuntimeError("audit DB locked")
+    async def on_fail(ctx, reason):
+        fails.append(reason)
+
+    orch = Orchestrator([OkSkill()], store, on_fail=on_fail, on_success=on_success)
+    ctx = Context(trace_id="t1", event_id="e1")
+    await orch.run(ctx)
+
+    assert fails == [], f"on_fail should NOT fire when only on_success raised, got {fails}"
+    assert store.finished == [("t1", "success", None)], (
+        f"trace must remain marked success, got {store.finished}"
+    )
+
+
 async def test_ctx_updates_accumulate_across_skills():
     class SkillA(Skill):
         name = "skill_a"

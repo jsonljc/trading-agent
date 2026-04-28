@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Stop the trading agent and bridge. Does not unload the launchd jobs;
+# use bin/agent-uninstall for that.
+set -euo pipefail
+
+# Agent first so it cleanly closes the socket before the bridge tries to write.
+launchctl stop com.jasonli.trading-watchdog || true
+launchctl stop com.jasonli.trading-agent || true
+launchctl stop com.jasonli.trading-bridge || true
+
+echo "stopped bridge + agent + watchdog"
+exec "$(dirname "$0")/agent-status"
