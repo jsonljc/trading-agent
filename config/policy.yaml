@@ -97,6 +97,6 @@ discord_extension:
   channel_id_map:
     # Replace with real Discord channel IDs (right-click channel → Copy ID
     # in Discord with Developer Mode enabled).
-    "REPLACE_MYSTIC_CHANNEL_ID": mystic
-    "REPLACE_YONEZU_CHANNEL_ID": yonezu
-    "REPLACE_STOCK_TALK_PORTFOLIO_CHANNEL_ID": stock-talk-portfolio
+    "1229546005788098580": mystic
+    "1248378121451733083": yonezu
+    "1217309136681832540": stock-talk-portfolio
