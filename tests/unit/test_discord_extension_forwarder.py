@@ -105,11 +105,7 @@ async def test_bridge_socket_client_writes_one_line():
 async def test_bridge_socket_client_buffers_when_socket_missing(tmp_path):
     from infra.bridge_client.discord_extension_forwarder import BridgeSocketClient
 
-    missing_path = "/tmp/does_not_exist_yet_xyz.sock"
-    try:
-        os.unlink(missing_path)
-    except FileNotFoundError:
-        pass
+    missing_path = str(tmp_path / "does_not_exist.sock")
 
     client = BridgeSocketClient(missing_path)
     # Should not raise; should buffer.

@@ -82,4 +82,8 @@ class BridgeSocketClient:
                     self._buffer.popleft()
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 logger.warning("Bridge socket write failed: %s", e)
+                try:
+                    self._writer.close()
+                except Exception:
+                    pass
                 self._writer = None  # next send retries
