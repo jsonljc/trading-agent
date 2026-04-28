@@ -39,12 +39,21 @@ class Orchestrator:
                     return ctx
 
             await self._trace_store.finish(ctx.trace_id, "success")
-            if self._on_success:
-                await self._on_success(ctx)
         except Exception as exc:
             reason = f"unhandled exception in pipeline: {exc}"
             logger.exception(reason)
             await self._trace_store.finish(ctx.trace_id, "failed", reason)
             if self._on_fail:
-                await self._on_fail(ctx, reason)
+                try:
+                    await self._on_fail(ctx, reason)
+                except Exception:
+                    logger.exception("on_fail callback itself failed")
+            return ctx
+        # on_success runs OUTSIDE the try so a hiccup here (e.g. audit DB
+        # locked) does not retroactively mislabel a successful run as failed.
+        if self._on_success:
+            try:
+                await self._on_success(ctx)
+            except Exception:
+                logger.exception("on_success callback failed (pipeline already succeeded)")
         return ctx
