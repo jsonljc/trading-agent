@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class TriggerPolicy(BaseModel):
@@ -99,7 +99,7 @@ class ExecutionPolicy(BaseModel):
 
 class DiscordExtensionConfig(BaseModel):
     forwarder_port: int = 9876
-    channel_id_map: dict[str, str] = {}
+    channel_id_map: dict[str, str] = Field(default_factory=dict)
 
 
 class PolicyModel(BaseModel):

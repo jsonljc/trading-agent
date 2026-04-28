@@ -1,10 +1,13 @@
 import textwrap
 import tempfile
 import os
+from pathlib import Path
 from agent.policy import load_policy
 
 
-BASE_POLICY = open("config/policy.yaml").read()
+POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "policy.yaml"
+with POLICY_PATH.open() as _f:
+    BASE_POLICY = _f.read()
 
 
 def _write(extra_yaml: str) -> str:
