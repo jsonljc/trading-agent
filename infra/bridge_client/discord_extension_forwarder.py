@@ -87,3 +87,92 @@ class BridgeSocketClient:
                 except Exception:
                     pass
                 self._writer = None  # next send retries
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._writer is not None:
+                self._writer.close()
+                try:
+                    await self._writer.wait_closed()
+                except Exception:
+                    pass
+                self._writer = None
+
+
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
+
+
+def _make_handler(channel_map: dict[str, str], client: "BridgeSocketClient",
+                  loop: asyncio.AbstractEventLoop):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            logger.info("forwarder %s - " + fmt, self.address_string(), *args)
+
+        def _respond(self, code: int) -> None:
+            self.send_response(code)
+            self.send_header("Content-Length", "0")
+            # CORS for the extension's fetch from the discord.com origin.
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.end_headers()
+
+        def do_OPTIONS(self):
+            self._respond(204)
+
+        def do_POST(self):
+            if self.path != "/signal":
+                self._respond(404)
+                return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length) if length else b""
+            try:
+                payload = json.loads(raw.decode())
+            except Exception:
+                logger.exception("Bad JSON from extension")
+                self._respond(400)
+                return
+
+            channel = map_channel(payload.get("channel_id"), channel_map)
+            if channel is None:
+                logger.info("Dropping unmapped channel_id=%s", payload.get("channel_id"))
+                self._respond(204)
+                return
+
+            envelope = build_envelope(
+                channel=channel,
+                author=str(payload.get("author", "unknown")),
+                content=str(payload.get("content", "")),
+                message_id=str(payload.get("message_id", "")),
+                received_at=payload.get("timestamp"),
+            )
+            fut = asyncio.run_coroutine_threadsafe(client.send(envelope), loop)
+            try:
+                fut.result(timeout=1.0)
+            except Exception:
+                logger.exception("Failed to forward envelope")
+            self._respond(204)
+    return Handler
+
+
+async def run_forwarder(host: str, port: int, socket_path: str,
+                        channel_map: dict[str, str]) -> None:
+    """Run the HTTP forwarder until cancelled."""
+    loop = asyncio.get_running_loop()
+    client = BridgeSocketClient(socket_path)
+    handler_cls = _make_handler(channel_map, client, loop)
+    httpd = ThreadingHTTPServer((host, port), handler_cls)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Discord extension forwarder listening on %s:%s", host, port)
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+        await client.close()
