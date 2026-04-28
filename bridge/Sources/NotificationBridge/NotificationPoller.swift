@@ -84,8 +84,14 @@ public final class NotificationDBPoller {
             let data = Data(bytes: blobPtr, count: Int(blobLen))
             if let record = Self.decodeRecord(recId: recId, deliveredDate: deliveredDate, data: data) {
                 results.append(record)
+                lastSeenId = max(lastSeenId, recId)
+            } else {
+                // Don't advance lastSeenId past an undecodable row — a future
+                // poll may catch the row once the WAL settles or once a fix
+                // teaches decodeRecord a new plist variant. Silently dropping
+                // here would lose trading signals forever.
+                FileHandle.standardError.write(Data("WARN: NotificationDBPoller failed to decode rec_id=\(recId)\n".utf8))
             }
-            lastSeenId = max(lastSeenId, recId)
         }
         return results
     }
