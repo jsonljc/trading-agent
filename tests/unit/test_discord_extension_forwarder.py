@@ -1,8 +1,4 @@
-import pytest
-from infra.bridge_client.discord_extension_forwarder import (
-    map_channel,
-    build_envelope,
-)
+from infra.bridge_client.discord_extension_forwarder import map_channel
 
 
 CHANNEL_MAP = {
