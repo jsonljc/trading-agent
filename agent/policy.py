@@ -97,6 +97,11 @@ class ExecutionPolicy(BaseModel):
     max_chase_pct: float = 0.15
 
 
+class DiscordExtensionConfig(BaseModel):
+    forwarder_port: int = 9876
+    channel_id_map: dict[str, str] = {}
+
+
 class PolicyModel(BaseModel):
     trigger: TriggerPolicy
     instrument_policy: InstrumentPolicy
@@ -112,6 +117,7 @@ class PolicyModel(BaseModel):
     telegram: TelegramConfig
     ib_gateway: IBGatewayPolicy = IBGatewayPolicy()
     execution: ExecutionPolicy = ExecutionPolicy()
+    discord_extension: DiscordExtensionConfig = DiscordExtensionConfig()
 
 
 def load_policy(path: str) -> PolicyModel:

@@ -91,3 +91,12 @@ execution:
     aggressive_fast: [0.01, 0.03, 0.06, 0.10]
   reprice_interval_ms: 2500
   max_chase_pct: 0.15
+
+discord_extension:
+  forwarder_port: 9876
+  channel_id_map:
+    # Replace with real Discord channel IDs (right-click channel → Copy ID
+    # in Discord with Developer Mode enabled).
+    "REPLACE_MYSTIC_CHANNEL_ID": mystic
+    "REPLACE_YONEZU_CHANNEL_ID": yonezu
+    "REPLACE_STOCK_TALK_PORTFOLIO_CHANNEL_ID": stock-talk-portfolio
