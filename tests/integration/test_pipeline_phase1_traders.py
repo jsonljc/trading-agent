@@ -44,7 +44,7 @@ async def test_wse_shortcut_path_logs_classification_no_llm_call(db):
     ctx = Context(trace_id="t1", event_id="e1", data={
         "author": "Wall St Engine",
         "channel": "alerts",
-        "full_message_text": "Added 2% AUDC pos. @Wall - Alerts",
+        "full_message_text": "Added 2% pos AUDC @Wall - Alerts",
     })
     await orch.run(ctx)
 

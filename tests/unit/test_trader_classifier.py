@@ -43,7 +43,7 @@ async def test_shortcut_path_uses_stated_size_no_llm_call():
     ctx = Context(trace_id="t", event_id="e", data={
         "author": "Wall St Engine",
         "trader_handle": "wse",
-        "full_message_text": "Added 2% AUDC pos. on back of earnings",
+        "full_message_text": "Added 2% pos AUDC on back of earnings",
     })
 
     result = await classifier.run(ctx)
@@ -164,3 +164,44 @@ async def test_shortcut_threshold_at_7_5_pct_buckets_high():
     assert ctx.get("size_pct") == 0.075
     assert ctx.get("bucket") == "HIGH"
     assert ctx.get("size_source") == "shortcut_stated"
+
+
+class ExplodingLLM:
+    async def classify(self, **kw):
+        raise TimeoutError("timeout")
+
+
+@pytest.mark.asyncio
+async def test_llm_error_returns_success_with_skip_for_audit_logging():
+    profile = make_profile(size_in_msg=False)
+    registry = TraderRegistry([profile])
+    classifier = TraderClassifier(registry, ExplodingLLM())
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Wall St Engine", "trader_handle": "wse",
+        "full_message_text": "ambiguous content here",
+    })
+
+    result = await classifier.run(ctx)
+    assert result.status == "success"  # not "fail" — must reach logger
+    assert ctx.get("bucket") == "SKIP"
+    assert ctx.get("size_pct") == 0.0
+    assert ctx.get("size_source") == "llm_error"
+    assert "TimeoutError" in (ctx.get("classifier_reason") or "")
+
+
+@pytest.mark.asyncio
+async def test_llm_returns_ticker_not_in_message_skips():
+    profile = make_profile(size_in_msg=False)
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": True, "ticker": "FAKE", "side": "long",
+                   "bucket": "LOW", "confidence": 0.9, "reason": "hallucinated"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Wall St Engine", "trader_handle": "wse",
+        "full_message_text": "thinking about loading AAPL here",  # only AAPL, no FAKE
+    })
+
+    result = await classifier.run(ctx)
+    assert result.status == "success"
+    assert ctx.get("bucket") == "SKIP"
+    assert ctx.get("size_source") == "ticker_not_in_msg"

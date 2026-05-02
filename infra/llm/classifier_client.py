@@ -5,11 +5,15 @@ import re
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
+DEFAULT_TIMEOUT_SECONDS = 8.0
+
 
 class AnthropicClassifierClient:
-    def __init__(self, anthropic_client, max_tokens: int = 256) -> None:
+    def __init__(self, anthropic_client, max_tokens: int = 256,
+                 timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> None:
         self._anth = anthropic_client
         self._max_tokens = max_tokens
+        self._timeout_seconds = timeout_seconds
 
     async def classify(self, *, system: list, model: str, messages: list) -> dict:
         response = await self._anth.messages.create(
@@ -17,6 +21,7 @@ class AnthropicClassifierClient:
             max_tokens=self._max_tokens,
             system=system,
             messages=messages,
+            timeout=self._timeout_seconds,
         )
         text = response.content[0].text
         try:

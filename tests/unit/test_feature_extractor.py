@@ -48,3 +48,28 @@ def test_no_partial_word_ticker_extraction():
     f = extract_features("ADDED 2% POSITION IN AAPL")
     # SITION (last 6 chars of POSITION) must NOT be extracted as a ticker.
     assert "SITION" not in f.tickers_in_msg
+
+
+def test_bare_percentage_in_prose_does_not_match_size():
+    f = extract_features("AAPL — earnings beat with 8% revenue growth, opened a position")
+    assert f.stated_size_pct is None
+
+
+def test_short_interest_percentage_does_not_match_size():
+    f = extract_features("Mcap: $4B Short Interest: 23%. opened a small position")
+    assert f.stated_size_pct is None
+
+
+def test_size_with_pos_suffix_matches():
+    f = extract_features("Added 2% pos AAPL")
+    assert f.stated_size_pct == 2.0
+
+
+def test_size_with_position_suffix_matches():
+    f = extract_features("Added a 2% position in CEG calls")
+    assert f.stated_size_pct == 2.0
+
+
+def test_size_with_weighting_suffix_matches():
+    f = extract_features("a small 1% weighting @ $41.22")
+    assert f.stated_size_pct == 1.0

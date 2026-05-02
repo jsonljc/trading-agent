@@ -99,7 +99,17 @@ class TraderClassifier(Skill):
             )
         except Exception as exc:
             logger.exception("trader_classifier llm error: %s", exc)
-            return SkillResult(status="fail", reason=f"llm_error:{exc}")
+            features_json = json.dumps(dataclasses.asdict(features))
+            updates = {
+                "bucket": "SKIP", "confidence": 0.0,
+                "size_pct": 0.0, "size_source": "llm_error",
+                "classifier_features_json": features_json,
+                "classifier_llm_response_json": None,
+                "classifier_reason": f"llm_error:{type(exc).__name__}",
+            }
+            ctx.update(updates)
+            return SkillResult(status="success", updates=updates,
+                               reason=f"llm_error:{type(exc).__name__}")
 
         bucket = response.get("bucket", "SKIP")
         confidence = float(response.get("confidence", 0.0))
@@ -121,6 +131,23 @@ class TraderClassifier(Skill):
             ctx.update(updates)
             return SkillResult(status="success", updates=updates,
                                reason=f"classifier_skip:{reason}")
+
+        # Validate ticker is present in message to reject LLM hallucinations.
+        # Only enforce when the extractor found at least one ticker; if none were
+        # extracted (e.g. single-letter symbols, no $-prefix), we cannot validate.
+        ticker_upper = (response.get("ticker") or "").upper().strip()
+        tickers_upper = {t.upper() for t in features.tickers_in_msg}
+        if ticker_upper and tickers_upper and ticker_upper not in tickers_upper:
+            updates = {
+                "bucket": "SKIP", "confidence": confidence,
+                "size_pct": 0.0, "size_source": "ticker_not_in_msg",
+                "classifier_features_json": features_json,
+                "classifier_llm_response_json": llm_json,
+                "classifier_reason": f"llm_ticker_not_in_msg:{ticker_upper}",
+            }
+            ctx.update(updates)
+            return SkillResult(status="success", updates=updates,
+                               reason=f"ticker_not_in_msg:{ticker_upper}")
 
         if confidence < DROP_CONF_THRESHOLD:
             updates = {

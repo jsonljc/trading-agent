@@ -52,3 +52,12 @@ async def test_classifier_raises_on_unparseable_response():
     client = AnthropicClassifierClient(fake)
     with pytest.raises(ValueError, match="parse"):
         await client.classify(system=[], model="m", messages=[])
+
+
+@pytest.mark.asyncio
+async def test_classifier_passes_timeout_to_create():
+    fake = FakeAnthropic('{"is_entry": true, "ticker": "X", "side": "long", '
+                        '"bucket": "LOW", "confidence": 0.9, "reason": "x"}')
+    client = AnthropicClassifierClient(fake, timeout_seconds=8.0)
+    await client.classify(system=[], model="m", messages=[])
+    assert fake.calls[0]["timeout"] == 8.0

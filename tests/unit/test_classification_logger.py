@@ -110,3 +110,54 @@ async def test_logger_records_bootstrap_review_for_non_autonomous():
         await logger.run(ctx)
         rows = await store.recent_for_trader("mystic")
         assert rows[0]["action_taken"] == "bootstrap_review"
+
+
+@pytest.mark.asyncio
+async def test_logger_records_llm_error_action():
+    async with aiosqlite.connect(":memory:") as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(SCHEMA)
+        await conn.commit()
+
+        store = ClassificationLogStore(conn)
+        logger = ClassificationLogger(store)
+        ctx = Context(trace_id="t", event_id="e", data={
+            "trader_handle": "wse",
+            "trader_auto_execute": True,
+            "full_message_text": "msg",
+            "bucket": "SKIP",
+            "confidence": 0.0,
+            "size_pct": 0.0,
+            "size_source": "llm_error",
+            "classifier_features_json": "{}",
+            "classifier_llm_response_json": None,
+            "classifier_reason": "llm_error:TimeoutError",
+        })
+        await logger.run(ctx)
+        rows = await store.recent_for_trader("wse")
+        assert rows[0]["action_taken"] == "llm_error"
+
+
+@pytest.mark.asyncio
+async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
+    async with aiosqlite.connect(":memory:") as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(SCHEMA)
+        await conn.commit()
+        store = ClassificationLogStore(conn)
+        logger = ClassificationLogger(store)
+        ctx = Context(trace_id="t", event_id="e", data={
+            "trader_handle": "wse",
+            "trader_auto_execute": True,
+            "full_message_text": "msg",
+            "bucket": "LOW",
+            "confidence": 0.9,
+            "size_pct": 0.0,
+            "size_source": "shortcut_stated",
+            "classifier_features_json": "{}",
+            "classifier_llm_response_json": None,
+            "classifier_reason": "stated_size_in_message",
+        })
+        await logger.run(ctx)
+        rows = await store.recent_for_trader("wse")
+        assert rows[0]["action_taken"] == "skipped"

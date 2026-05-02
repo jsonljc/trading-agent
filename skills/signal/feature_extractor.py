@@ -9,7 +9,7 @@ _ENTRY_VERBS = re.compile(
     re.IGNORECASE,
 )
 _SIZE_PCT = re.compile(
-    r"(\d+(?:\.\d+)?)\s*%\s*(?:pos|position|weighting|wt)?",
+    r"(\d+(?:\.\d+)?)\s*%\s*(?:pos|position|weighting|wt|wtg)\b",
     re.IGNORECASE,
 )
 _TICKERS = re.compile(r"(?<!\w)\$?([A-Z]{1,6})\b")

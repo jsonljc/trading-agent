@@ -46,9 +46,14 @@ class ClassificationLogger(Skill):
 
     @staticmethod
     def _infer_action(ctx: Context, bucket: str) -> str:
-        if ctx.get("size_source") == "drop_low_conf":
+        size_source = ctx.get("size_source")
+        if size_source == "drop_low_conf":
             return "dropped_low_conf"
-        if bucket == "SKIP":
+        if size_source == "llm_error":
+            return "llm_error"
+        if size_source == "ticker_not_in_msg":
+            return "ticker_not_in_msg"
+        if bucket == "SKIP" or float(ctx.get("size_pct", 0.0)) <= 0:
             return "skipped"
         if not ctx.get("trader_auto_execute", False):
             return "bootstrap_review"
