@@ -98,3 +98,30 @@ class TelegramDigest(Skill):
             await self._client.send_message(text)
         except Exception as exc:
             logger.error("Skip digest delivery failed: %s", exc)
+
+    async def send_bootstrap_review_digest(self, ctx: Context) -> None:
+        import html
+        trader = html.escape(ctx.get("trader_handle", "?"))
+        author = html.escape(ctx.get("author", "?"))
+        channel = html.escape(ctx.get("channel", "?"))
+        ticker = html.escape(ctx.get("ticker") or "(no-ticker)")
+        bucket = html.escape(ctx.get("bucket", "?"))
+        size_pct = ctx.get("size_pct", 0.0)
+        size_display = f"{size_pct * 100:.0f}%"
+        confidence = ctx.get("confidence", 0.0)
+        why = html.escape(ctx.get("classifier_reason", ""))
+        msg = html.escape(ctx.get("full_message_text", ""))
+        text = (
+            f"<b>BOOTSTRAP REVIEW</b>\n\n"
+            f"Trader: {trader} ({author})\n"
+            f"Channel: #{channel}\n"
+            f"Ticker: <b>{ticker}</b>\n"
+            f"Proposed: <b>{bucket}</b> @ {size_display} (conf {confidence:.2f})\n"
+            f"Why: <i>{why}</i>\n\n"
+            f"Message:\n<i>{msg}</i>\n\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Bootstrap review delivery failed: %s", exc)

@@ -52,3 +52,28 @@ async def test_error_digest():
     await skill.send_error_digest(ctx, "ticker ambiguous")
     assert "ERROR" in client.sent[0]
     assert "ticker ambiguous" in client.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_review_digest_includes_classification_details(telegram):
+    digest = TelegramDigest(telegram, mode="signal_only")
+    ctx = Context(trace_id="t1", event_id="e1", data={
+        "trader_handle": "mystic",
+        "author": "UndefinedMystic",
+        "channel": "alerts",
+        "ticker": "INDI",
+        "bucket": "LOW",
+        "confidence": 0.72,
+        "size_pct": 0.05,
+        "classifier_reason": "small + swing trade self-label",
+        "full_message_text": "i opened a small swing trade in INDI",
+    })
+    await digest.send_bootstrap_review_digest(ctx)
+    assert len(telegram.sent) == 1
+    body = telegram.sent[0]
+    assert "BOOTSTRAP REVIEW" in body
+    assert "mystic" in body
+    assert "INDI" in body
+    assert "LOW" in body
+    assert "5%" in body
+    assert "0.72" in body
