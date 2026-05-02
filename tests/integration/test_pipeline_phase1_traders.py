@@ -55,6 +55,39 @@ async def test_wse_shortcut_path_logs_classification_no_llm_call(db):
 
 
 @pytest.mark.asyncio
+async def test_skip_classifications_are_logged(db):
+    profiles = load_all_profiles(REPO_ROOT / "config" / "traders")
+    registry = TraderRegistry(profiles)
+    log_store = ClassificationLogStore(db)
+    trace_store = TraceStore(db)
+
+    llm = StubLLM({"is_entry": False, "ticker": None, "side": "none",
+                   "bucket": "SKIP", "confidence": 0.92, "reason": "macro commentary"})
+
+    from skills.signal.classification_logger import ClassificationLogger
+    from skills.signal.entry_skip_gate import EntrySkipGate
+
+    skills = [
+        TraderRouter(registry),
+        TraderClassifier(registry, llm),
+        ClassificationLogger(log_store),
+        EntrySkipGate(),
+    ]
+    orch = Orchestrator(skills, trace_store)
+    ctx = Context(trace_id="t3", event_id="e3", data={
+        "author": "Stock Talk Weekly",
+        "channel": "alerts",
+        "full_message_text": "Yet another intraday fade in the market with $SPY $QQQ flushing red @Stock Talk Weekly - Alerts",
+    })
+    await orch.run(ctx)
+
+    rows = await log_store.recent_for_trader("stocktalkweekly")
+    assert len(rows) == 1
+    assert rows[0]["bucket"] == "SKIP"
+    assert rows[0]["action_taken"] == "skipped"
+
+
+@pytest.mark.asyncio
 async def test_mystic_bootstrap_mode_posts_to_telegram_and_skips(db):
     profiles = load_all_profiles(REPO_ROOT / "config" / "traders")
     registry = TraderRegistry(profiles)

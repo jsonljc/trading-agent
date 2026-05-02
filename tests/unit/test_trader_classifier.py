@@ -107,13 +107,13 @@ async def test_llm_path_low_confidence_drops():
     })
 
     result = await classifier.run(ctx)
-    assert result.status == "skip"
+    assert result.status == "success"
     assert "low_confidence" in (result.reason or "")
     assert ctx.get("size_pct") == 0.0
 
 
 @pytest.mark.asyncio
-async def test_llm_skip_response_skips_pipeline():
+async def test_llm_skip_response_marks_bucket_skip():
     profile = make_profile(size_in_msg=False)
     registry = TraderRegistry([profile])
     llm = FakeLLM({"is_entry": False, "ticker": None, "side": "none",
@@ -125,7 +125,7 @@ async def test_llm_skip_response_skips_pipeline():
     })
 
     result = await classifier.run(ctx)
-    assert result.status == "skip"
+    assert result.status == "success"
     assert ctx.get("bucket") == "SKIP"
 
 

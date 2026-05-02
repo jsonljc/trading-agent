@@ -9,6 +9,7 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
     from skills.signal.trader_router import TraderRouter
     from skills.signal.trader_classifier import TraderClassifier
     from skills.signal.classification_logger import ClassificationLogger
+    from skills.signal.entry_skip_gate import EntrySkipGate
     from skills.signal.bootstrap_review_gate import BootstrapReviewGate
     from skills.risk.idempotency_check import IdempotencyCheck
     from skills.posttrade.telegram_digest import TelegramDigest
@@ -27,6 +28,7 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
         TraderRouter(trader_registry),
         TraderClassifier(trader_registry, llm_classifier),
         ClassificationLogger(classification_log_store),
+        EntrySkipGate(),                            # NEW: terminate non-actionable
         BootstrapReviewGate(digest),
         IdempotencyCheck(policy, idempotency_store),
     ]

@@ -119,7 +119,7 @@ class TraderClassifier(Skill):
                 "classifier_reason": reason,
             }
             ctx.update(updates)
-            return SkillResult(status="skip", updates=updates,
+            return SkillResult(status="success", updates=updates,
                                reason=f"classifier_skip:{reason}")
 
         if confidence < DROP_CONF_THRESHOLD:
@@ -131,7 +131,7 @@ class TraderClassifier(Skill):
                 "classifier_reason": reason,
             }
             ctx.update(updates)
-            return SkillResult(status="skip", updates=updates,
+            return SkillResult(status="success", updates=updates,
                                reason=f"low_confidence:{confidence:.2f}")
 
         if confidence < HIGH_CONF_THRESHOLD:
