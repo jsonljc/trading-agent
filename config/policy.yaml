@@ -37,16 +37,19 @@ models:
   text: claude-haiku-4-5-20251001
 
 watched_channels:
+  # For channels routed to a trader profile in config/traders/, the per-trader
+  # auto_execute flag is the source of truth — these channel-level flags must
+  # match. WSE → autonomous, STW + Mystic → bootstrap-review until validated.
   mystic:
-    auto_execute: true
+    auto_execute: false        # Mystic profile: auto_execute=false (bootstrap)
+  wall-st-engine:
+    auto_execute: true         # WSE profile: auto_execute=true (autonomous)
+  stock-talk-portfolio:
+    auto_execute: false        # STW profile: auto_execute=false (bootstrap)
   alerts:
     auto_execute: true
   trades:
     auto_execute: true
-  wall-st-engine:
-    auto_execute: false
-  stock-talk-portfolio:
-    auto_execute: false
   chat:
     auto_execute: false
   yonezu:
@@ -93,6 +96,11 @@ discord_extension:
   channel_id_map:
     # Replace with real Discord channel IDs (right-click channel → Copy ID
     # in Discord with Developer Mode enabled).
+    # Every entry in `watched_channels` that maps to a trader profile in
+    # config/traders/ must have at least one ID listed here, or messages
+    # from that channel will never reach the agent.
     "1229546005788098580": mystic
     "1248378121451733083": yonezu
     "1217309136681832540": stock-talk-portfolio
+    # TODO operator: fill in the real channel ID for Wall St Engine.
+    "REPLACE_ME_WSE_CHANNEL_ID": wall-st-engine
