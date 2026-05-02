@@ -15,15 +15,21 @@ import argparse
 import os
 import uuid
 
+from pathlib import Path
+import anthropic
 from agent.policy import load_policy
 from agent.context import Context
 from agent.orchestrator import Orchestrator
 from agent.registry import build_phase1_chain
+from agent.traders.profile import load_all_profiles
+from agent.traders.registry import TraderRegistry
 from infra.storage.db import get_connection
 from infra.storage.trace_store import TraceStore
 from infra.storage.idempotency_store import IdempotencyStore
 from infra.storage.signal_store import SignalStore
 from infra.storage.execution_store import ExecutionStore
+from infra.storage.classification_log_store import ClassificationLogStore
+from infra.llm.classifier_client import AnthropicClassifierClient
 from infra.telegram.client import TelegramClient
 from infra.bridge_client.socket_reader import SocketReader, TriggerEvent
 
@@ -47,6 +53,10 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     trace_store = TraceStore(conn)
     idempotency_store = IdempotencyStore(conn)
     execution_store = ExecutionStore(conn)
+    classification_log_store = ClassificationLogStore(conn)
+    trader_profiles = load_all_profiles(Path("config/traders"))
+    trader_registry = TraderRegistry(trader_profiles)
+    llm_classifier = AnthropicClassifierClient(anthropic.AsyncAnthropic())
     from infra.storage.trade_intent_store import TradeIntentStore
     trade_intent_store = TradeIntentStore(conn)
     telegram = TelegramClient(
@@ -75,7 +85,13 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     from skills.execution.execution_audit_writer import ExecutionAuditWriter
     from skills.execution.execution_reconciler import ExecutionReconciler
 
-    phase1_chain = build_phase1_chain(policy, idempotency_store, telegram, gateway=gateway)
+    phase1_chain = build_phase1_chain(
+        policy, idempotency_store, telegram,
+        gateway=gateway,
+        trader_registry=trader_registry,
+        classification_log_store=classification_log_store,
+        llm_classifier=llm_classifier,
+    )
     phase2b_chain = build_phase2b_execution_chain(policy, execution_store, gateway, trade_intent_store)
     full_chain = phase1_chain + phase2b_chain
 
