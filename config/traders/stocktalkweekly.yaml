@@ -1,0 +1,27 @@
+handle: stocktalkweekly
+display_name: Stock Talk Weekly
+discord_author_pattern: "Stock Talk Weekly"
+alert_mention: "@Stock Talk Weekly - Alerts"
+require_alert_mention: true
+bot_authors_to_skip: []
+auto_execute: false
+size_in_message: true
+prefer_message_size: true
+classifier_model: claude-haiku-4-5
+availability_phrases: ["off the grid", "passover", "on vacation"]
+conviction_examples:
+  - msg: "This will join the 'Prospective Positions' group with a small 1% weighting @ $41.22"
+    bucket: LOW
+    why: "explicit 1%, prospective starter"
+  - msg: "names that I want to upsize when the opportunity arises"
+    bucket: SKIP
+    why: "intent to upsize later, not an entry now"
+  - msg: "Fully closed remainder of position. Too much uncertainty around shipping insurance & fuel prices in this environment ... lowest conviction name in the portfolio"
+    bucket: SKIP
+    why: "exit, not entry"
+  - msg: "PORTFOLIO UPDATE - 18 POSITIONS"
+    bucket: SKIP
+    why: "ledger snapshot"
+  - msg: "Yet another intraday fade in the market with $SPY $QQQ flushing red. Market can't get off the mat with these oil concerns."
+    bucket: SKIP
+    why: "macro commentary"

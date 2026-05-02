@@ -1,0 +1,30 @@
+handle: mystic
+display_name: UndefinedMystic
+discord_author_pattern: "UndefinedMystic"
+alert_mention: "@Alerts - Mystic"
+require_alert_mention: true
+bot_authors_to_skip: []
+auto_execute: false
+size_in_message: false
+prefer_message_size: true
+classifier_model: claude-haiku-4-5
+availability_phrases: ["off the grid", "passover", "on vacation", "traveling"]
+conviction_examples:
+  - msg: "i opened a small swing trade position in INDI — short term swing trade based on momentum in semis"
+    bucket: LOW
+    why: "small + swing trade self-label"
+  - msg: "bought todays IPO $ELMT here at $17.90 for a swing trade as we've seen IPOs have been hot lately"
+    bucket: LOW
+    why: "swing trade framing, single-shot"
+  - msg: "Alpha + Omega Semiconductor long idea. Been looking for the unique undiscovered way to get meaningful exposure to the agentic ai induced CPU boom. [multi-paragraph thesis]"
+    bucket: HIGH
+    why: "labeled long idea, deep multi-point thesis"
+  - msg: "These are mid level conviction swing trade ideas for current mkt regime always do your own dd"
+    bucket: LOW
+    why: "self-stamped mid-level swing"
+  - msg: "fyi.... INTTeresting given nxpi earnings move today"
+    bucket: SKIP
+    why: "fyi/interesting, no entry"
+  - msg: "tailwind for the apple peice...."
+    bucket: SKIP
+    why: "color, not entry"
