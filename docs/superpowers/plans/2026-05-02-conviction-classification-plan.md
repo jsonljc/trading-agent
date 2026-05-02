@@ -44,8 +44,13 @@
 - `skills/posttrade/telegram_digest.py` — add `send_bootstrap_review_digest`
 - `tests/unit/test_order_sizer.py` — update for new size_pct flow
 
-**Files left untouched (intentionally):**
-- `skills/signal/signal_analyzer.py`, `skills/signal/conviction_classifier.py` — kept on disk during shadow-mode; deletion is post-cutover and out of scope for this plan.
+**Files deleted (Task 13 — clean cutover, the legacy pipeline was never run in production):**
+- `skills/signal/signal_analyzer.py`
+- `skills/signal/conviction_classifier.py`
+- `tests/unit/test_signal_analyzer.py`
+- `tests/unit/test_conviction_classifier.py`
+- `agent/policy.py` — `SizingPolicy` class + `sizing_policy` field on `PolicyModel`
+- `config/policy.yaml` — `sizing_policy:` block
 
 ---
 
@@ -1989,10 +1994,10 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
 Run: `pytest tests/integration/test_pipeline_phase1_traders.py -v`
 Expected: PASS.
 
-- [ ] **Step 7: Run unit + integration test suite**
+- [ ] **Step 7: Run new tests only — old e2e tests will break in Task 13**
 
-Run: `pytest tests/unit tests/integration -x -q`
-Expected: all green. (Old `test_signal_analyzer.py` and `test_conviction_classifier.py` continue to pass against the legacy skills, which still exist on disk.)
+Run: `pytest tests/integration/test_pipeline_phase1_traders.py tests/unit/test_trader_classifier.py tests/unit/test_trader_router.py tests/unit/test_feature_extractor.py -x -q`
+Expected: all green. (Legacy `test_signal_analyzer.py`, `test_conviction_classifier.py`, and the e2e Phase 1 tests still reference the legacy skills and will be removed/updated in Task 13.)
 
 - [ ] **Step 8: Commit**
 
@@ -2004,7 +2009,184 @@ git commit -m "feat(pipeline): wire TraderRouter+Classifier+Logger+BootstrapGate
 
 ---
 
-## Task 13: `bin/promote_examples.py` — CLI to approve pending examples
+## Task 13: Delete legacy skills and clean up downstream
+
+The user has not run the legacy `SignalAnalyzer` / `ConvictionClassifier` pipeline in production. Deleting outright avoids dead-code maintenance and forces every reference to use the new `bucket` / `size_pct` ctx keys.
+
+**Files deleted:**
+- `skills/signal/signal_analyzer.py`
+- `skills/signal/conviction_classifier.py`
+- `tests/unit/test_signal_analyzer.py`
+- `tests/unit/test_conviction_classifier.py`
+
+**Files modified:**
+- `agent/policy.py` — drop `SizingPolicy` class and field on `PolicyModel`
+- `config/policy.yaml` — drop the `sizing_policy:` block
+- `skills/posttrade/telegram_digest.py` — `_format_signal_digest` reads `bucket` and `size_pct` instead of `conviction_bucket` / `target_allocation_pct`
+- `skills/execution/trade_intent_writer.py` — read `bucket` for the `conviction` column instead of `conviction_bucket`
+- `tests/unit/test_policy.py` — remove all `sizing_policy` blocks and assertions
+- `tests/unit/test_trade_intent_writer.py` — replace `conviction_bucket` with `bucket`
+- `tests/integration/test_telegram_digest.py` — replace `conviction_bucket` / `target_allocation_pct` with `bucket` / `size_pct`
+- `tests/e2e/test_phase1_pipeline.py` — rewrite to use the new pipeline (`TraderRouter` + `TraderClassifier` + stub LLM)
+- `tests/e2e/test_phase2b_execution_pipeline.py` — replace `conviction_bucket` with `bucket` and inject `size_pct` directly into ctx
+
+- [ ] **Step 1: Delete the legacy skill files and their unit tests**
+
+```bash
+git rm skills/signal/signal_analyzer.py skills/signal/conviction_classifier.py \
+       tests/unit/test_signal_analyzer.py tests/unit/test_conviction_classifier.py
+```
+
+- [ ] **Step 2: Strip `SizingPolicy` from `agent/policy.py`**
+
+Open `agent/policy.py`. Delete the `SizingPolicy` class definition (lines around 24–26):
+
+```python
+class SizingPolicy(BaseModel):
+    low_conviction_pct: float
+    high_conviction_pct: float
+```
+
+In `PolicyModel`, delete the line `sizing_policy: SizingPolicy`.
+
+- [ ] **Step 3: Strip `sizing_policy:` from `config/policy.yaml`**
+
+Edit `config/policy.yaml`. Delete the block:
+
+```yaml
+sizing_policy:
+  low_conviction_pct: 0.05
+  high_conviction_pct: 0.10
+```
+
+- [ ] **Step 4: Update `skills/posttrade/telegram_digest.py`**
+
+In `_format_signal_digest`, replace:
+
+```python
+allocation_pct = ctx.get("target_allocation_pct", 0)
+pct_display = f"{allocation_pct * 100:.0f}%"
+...
+conviction = html.escape(ctx.get("conviction_bucket", "?"))
+...
+f"Conviction: {conviction} → {pct_display} allocation\n\n"
+```
+
+with:
+
+```python
+size_pct = ctx.get("size_pct", 0.0)
+pct_display = f"{size_pct * 100:.0f}%"
+...
+bucket = html.escape(ctx.get("bucket", "?"))
+...
+f"Bucket: {bucket} → {pct_display} allocation\n\n"
+```
+
+- [ ] **Step 5: Update `skills/execution/trade_intent_writer.py`**
+
+Replace line 34:
+
+```python
+conviction = ctx.get("conviction") or ctx.get("conviction_bucket", "medium")
+```
+
+with:
+
+```python
+conviction = ctx.get("bucket") or ctx.get("conviction", "LOW")
+```
+
+(The DB column stays `conviction`; we're just sourcing its value from the new `bucket` key.)
+
+- [ ] **Step 6: Update `tests/unit/test_policy.py`**
+
+Remove all `sizing_policy:` blocks and the matching assertions (lines around 19–21, 51, 76–78, 132–134, 185–187). Run the test to confirm it still passes the trimmed schema.
+
+- [ ] **Step 7: Update `tests/unit/test_trade_intent_writer.py`**
+
+In every test that sets `conviction_bucket=...` in ctx, rename to `bucket=...`. Update the helper around line 14–21 accordingly. The DB record still has a `conviction` column.
+
+- [ ] **Step 8: Update `tests/integration/test_telegram_digest.py`**
+
+Replace every `"conviction_bucket": "..."` with `"bucket": "..."`, and `"target_allocation_pct": 0.10` with `"size_pct": 0.10`. Update assertions that scan for "Conviction:" to look for "Bucket:" instead.
+
+- [ ] **Step 9: Rewrite `tests/e2e/test_phase1_pipeline.py`**
+
+Read the file, replace the chain construction. Skeleton:
+
+```python
+import json
+import pytest
+from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from agent.context import Context
+from agent.orchestrator import Orchestrator
+from agent.traders.profile import load_all_profiles
+from agent.traders.registry import TraderRegistry
+from skills.signal.trader_router import TraderRouter
+from skills.signal.trader_classifier import TraderClassifier
+from skills.signal.classification_logger import ClassificationLogger
+from infra.storage.classification_log_store import ClassificationLogStore
+from infra.storage.trace_store import TraceStore
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class StubLLM:
+    def __init__(self, response: dict): self._r = response
+    async def classify(self, **kw): return self._r
+
+
+@pytest.mark.asyncio
+async def test_phase1_high_bucket_signal(db):
+    profiles = load_all_profiles(REPO_ROOT / "config" / "traders")
+    registry = TraderRegistry(profiles)
+    log_store = ClassificationLogStore(db)
+    trace_store = TraceStore(db)
+
+    llm = StubLLM({"is_entry": True, "ticker": "AOSL", "side": "long",
+                   "bucket": "HIGH", "confidence": 0.9, "reason": "long idea"})
+    skills = [
+        TraderRouter(registry),
+        TraderClassifier(registry, llm),
+        ClassificationLogger(log_store),
+    ]
+    orch = Orchestrator(skills, trace_store)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "UndefinedMystic",
+        "channel": "alerts",
+        "full_message_text": "Alpha + Omega Semiconductor long idea — deep thesis @Alerts - Mystic",
+    })
+    await orch.run(ctx)
+
+    rows = await log_store.recent_for_trader("mystic")
+    assert rows[0]["bucket"] == "HIGH"
+    assert rows[0]["size_pct"] == 0.10
+```
+
+(Mirror prior structure: keep tests for skip path, low bucket path, etc. — but with new ctx keys.)
+
+- [ ] **Step 10: Update `tests/e2e/test_phase2b_execution_pipeline.py`**
+
+In every test, replace `p.sizing_policy.low_conviction_pct = 0.05` / `p.sizing_policy.high_conviction_pct = 0.10` with nothing (those fields are gone). In ctx setup, replace `"conviction_bucket": "high"` with `"size_pct": 0.10`. Remove `low_pct` / `high_pct` arguments from the policy fixture.
+
+- [ ] **Step 11: Run the full test suite**
+
+Run: `pytest tests -x -q`
+Expected: all green. Any remaining `conviction_bucket` / `target_allocation_pct` / `sizing_policy` references should already be gone.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add -A
+git commit -m "refactor: delete legacy SignalAnalyzer/ConvictionClassifier and migrate tests to bucket/size_pct"
+```
+
+---
+
+## Task 14: `bin/promote_examples.py` — CLI to approve pending examples
 
 **Files:**
 - Create: `bin/promote_examples.py`
@@ -2189,7 +2371,7 @@ git commit -m "feat(cli): bin/promote_examples for appending approved examples t
 
 ---
 
-## Task 14: End-to-end smoke test through `main.py`
+## Task 15: End-to-end smoke test through `main.py`
 
 **Files:**
 - Modify: `main.py` (read once; identify the place where Phase 1 chain is built and adapt to pass new dependencies)
@@ -2265,8 +2447,9 @@ git commit -m "feat(main): wire trader_registry, classification log, llm classif
 - ✅ classification_log writes for every classification → Tasks 1, 8, 12
 - ✅ trader_examples_pending + trader_state schemas → Tasks 1, 9
 - ✅ Bootstrap mode posts to Telegram and stops pipeline → Tasks 11, 12
-- ✅ CLI to promote pending examples to YAML → Task 13
-- ✅ Pipeline integration in `agent/registry.py` and `main.py` → Tasks 12, 14
+- ✅ CLI to promote pending examples to YAML → Task 14
+- ✅ Pipeline integration in `agent/registry.py` and `main.py` → Tasks 12, 15
+- ✅ Legacy `SignalAnalyzer` / `ConvictionClassifier` deleted, `SizingPolicy` removed, downstream tests migrated → Task 13
 - ⚠ **Out of scope (deferred per spec Non-Goals):** thread-aware confirmation, multi-ticker fan-out, P&L learning, reaction-listener for Telegram. The pending store exists; population by a reactions listener is not part of this plan. Manual entry via the CLI's `approve` subcommand serves as the v1 path.
 
 **Placeholder scan:** No "TBD" / "TODO" / "implement later" / "similar to Task N". Each task contains complete code blocks for both tests and implementations.
@@ -2278,7 +2461,7 @@ git commit -m "feat(main): wire trader_registry, classification log, llm classif
 - `ctx["size_pct"]`, `ctx["size_source"]`, `ctx["bucket"]`, `ctx["confidence"]` set in Task 6, read in Tasks 8 (logger), 10 (OrderSizer), 11 (digest), 12 (gate). All consistent.
 - `LLMClassifierClient` Protocol defined in Task 6; satisfied by `AnthropicClassifierClient` in Task 7 (`async classify(*, system, model, messages) -> dict`). Match.
 - `ClassificationLogStore.insert` signature consistent across Tasks 8 and 12.
-- `ExamplesPendingStore.insert` returns `int`; CLI in Task 13 uses returned id via `_find_pending` lookup, no signature mismatch.
+- `ExamplesPendingStore.insert` returns `int`; CLI in Task 14 uses returned id via `_find_pending` lookup, no signature mismatch.
 
 All consistent.
 
