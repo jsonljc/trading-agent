@@ -25,3 +25,6 @@ conviction_examples:
   - msg: "Yet another intraday fade in the market with $SPY $QQQ flushing red. Market can't get off the mat with these oil concerns."
     bucket: SKIP
     why: "macro commentary"
+  - msg: "OPENING $SEI (SOLARIS ENERGY INFRASTRUCTURE) Ahead of Monday earnings. Mcap: $4B Short Interest: 23%. GE Vernova reported a blockuster Q1 and the read-through is strong. Strong sympathy to $GEV and a legitimate behind-the-meter power play."
+    bucket: HIGH
+    why: "OPENING entry with structured thesis (catalyst + cross-read + theme), STW's standard high-conviction format"

@@ -25,3 +25,6 @@ conviction_examples:
   - msg: "FDA APPROVES ARVINAS' $ARVN VEPDEGESTRANT"
     bucket: SKIP
     why: "WSE bot news headline"
+  - msg: "OPEN AMBQ (edge-AI theme): Fabless ultra-low power MCU/SoC vendor. (1) a defensible subthreshold-voltage IP moat, 2x-5x lower power; (2) Google, Garmin, Whoop wearable platform exposure with disclosed ramp into mass production in 2026; (3) optionality on smart glasses, hearing aids, cardiac monitors. Looks ready to retest IPO high."
+    bucket: HIGH
+    why: "structured multi-thesis OPEN with named catalysts and themes — high-conviction entry"
