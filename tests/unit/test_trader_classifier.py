@@ -133,14 +133,15 @@ async def test_llm_skip_response_skips_pipeline():
 async def test_stated_size_capped_at_10pct():
     profile = make_profile()
     registry = TraderRegistry([profile])
-    llm = FakeLLM({"is_entry": True, "ticker": "X", "side": "long",
+    llm = FakeLLM({"is_entry": True, "ticker": "XX", "side": "long",
                    "bucket": "LOW", "confidence": 0.9, "reason": "x"})
     classifier = TraderClassifier(registry, llm)
     ctx = Context(trace_id="t", event_id="e", data={
         "author": "Wall St Engine", "trader_handle": "wse",
-        "full_message_text": "Added 20% pos in X",
+        "full_message_text": "Added 20% pos in XX",
     })
 
     result = await classifier.run(ctx)
     assert ctx.get("size_pct") == 0.10
     assert ctx.get("size_source") == "shortcut_stated"
+    assert ctx.get("ticker") == "XX"

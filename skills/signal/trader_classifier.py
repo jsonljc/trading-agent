@@ -2,7 +2,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import re
 from typing import Protocol
 
 from agent.context import Context, SkillResult
@@ -12,12 +11,6 @@ from skills.signal.feature_extractor import extract_features
 
 
 logger = logging.getLogger(__name__)
-
-# Fallback: catches $X or "in X" / "pos X" single-letter tickers that the
-# feature extractor's 2-char minimum filter strips out.
-_SINGLE_TICKER_FALLBACK = re.compile(
-    r"(?:\$([A-Z])\b|(?:pos(?:ition)?|in)\s+([A-Z])\b)"
-)
 
 HIGH_CONF_THRESHOLD = 0.80
 DROP_CONF_THRESHOLD = 0.50
@@ -71,31 +64,17 @@ class TraderClassifier(Skill):
         )
 
         # Deterministic shortcut: stated size + entry verb + exactly one ticker.
-        # If the feature extractor filtered out single-letter tickers (2-char minimum),
-        # try a narrow fallback that catches "$X" or "pos in X" / "in X" patterns.
-        shortcut_tickers = features.tickers_in_msg
-        if not shortcut_tickers:
-            fallback_matches = [
-                m.group(1) or m.group(2)
-                for m in _SINGLE_TICKER_FALLBACK.finditer(msg)
-            ]
-            seen: dict[str, None] = {}
-            for t in fallback_matches:
-                if t:
-                    seen[t] = None
-            shortcut_tickers = tuple(seen.keys())
-
         if (
             profile.prefer_message_size
             and features.stated_size_pct is not None
             and features.entry_verb_present
-            and len(shortcut_tickers) == 1
+            and len(features.tickers_in_msg) == 1
         ):
             size_pct = min(features.stated_size_pct / 100.0, MAX_STATED_SIZE)
             # >=7.5% → HIGH bookkeeping; this is informational only since size_pct already won.
             bucket = "HIGH" if size_pct >= SIZE_LOW * 1.5 else "LOW"
             updates = {
-                "ticker": shortcut_tickers[0],
+                "ticker": features.tickers_in_msg[0],
                 "side": "long",
                 "bucket": bucket,
                 "confidence": 1.0,
