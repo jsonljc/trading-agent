@@ -33,15 +33,18 @@ class TelegramDigest(Skill):
         channel = html.escape(ctx.get("channel", "?"))
         author = html.escape(ctx.get("author", "?"))
         ticker = html.escape(ctx.get("ticker", "unresolved"))
-        intent = html.escape(ctx.get("intent", "?"))
-        confidence = html.escape(ctx.get("confidence", "?"))
+        confidence_val = ctx.get("confidence", "?")
+        if isinstance(confidence_val, float):
+            confidence = f"{confidence_val:.2f}"
+        else:
+            confidence = html.escape(str(confidence_val))
         bucket = html.escape(ctx.get("bucket", "?"))
         return (
             f"<b>SIGNAL PARSED</b>\n\n"
             f"Source: #{channel}\n"
             f"Author: {author}\n"
             f"Message: <i>{message}</i>\n\n"
-            f"Intent: <b>{intent}</b> ({confidence} confidence)\n"
+            f"Confidence: {confidence}\n"
             f"Ticker: <b>{ticker}</b>\n"
             f"Bucket: {bucket} → {pct_display} allocation\n\n"
             f"<code>trace: {ctx.trace_id}</code>"

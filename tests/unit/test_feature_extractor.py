@@ -42,3 +42,9 @@ def test_size_capped_phrase_match_case_insensitive():
 def test_single_letter_uppercase_words_are_not_tickers():
     f = extract_features("I think A is interesting today")
     assert f.tickers_in_msg == ()
+
+
+def test_no_partial_word_ticker_extraction():
+    f = extract_features("ADDED 2% POSITION IN AAPL")
+    # SITION (last 6 chars of POSITION) must NOT be extracted as a ticker.
+    assert "SITION" not in f.tickers_in_msg

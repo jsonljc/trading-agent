@@ -12,7 +12,7 @@ _SIZE_PCT = re.compile(
     r"(\d+(?:\.\d+)?)\s*%\s*(?:pos|position|weighting|wt)?",
     re.IGNORECASE,
 )
-_TICKERS = re.compile(r"\$?([A-Z]{1,6})\b")
+_TICKERS = re.compile(r"(?<!\w)\$?([A-Z]{1,6})\b")
 _DOLLAR_TICKERS = re.compile(r"\$([A-Z]{1,6})\b")
 
 

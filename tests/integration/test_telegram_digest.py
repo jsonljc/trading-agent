@@ -15,7 +15,7 @@ def make_ctx(**kwargs) -> Context:
     ctx.update({
         "channel": "mystic", "author": "Mystic",
         "full_message_text": "Long $AVEX today",
-        "intent": "LONG_SIGNAL", "confidence": "high",
+        "confidence": 0.85,
         "ticker": "AVEX", "bucket": "HIGH",
         "size_pct": 0.10,
         **kwargs,
@@ -31,8 +31,8 @@ async def test_digest_sends_signal_summary():
     assert len(client.sent) == 1
     msg = client.sent[0]
     assert "AVEX" in msg
-    assert "LONG_SIGNAL" in msg
-    assert "high" in msg.lower()
+    assert "Confidence:" in msg
+    assert "0.85" in msg
     assert "10%" in msg or "0.10" in msg
 
 
