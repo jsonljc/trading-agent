@@ -27,23 +27,26 @@ class TelegramDigest(Skill):
 
     def _format_signal_digest(self, ctx: Context) -> str:
         import html
-        allocation_pct = ctx.get("target_allocation_pct", 0)
-        pct_display = f"{allocation_pct * 100:.0f}%"
+        size_pct = ctx.get("size_pct", 0)
+        pct_display = f"{size_pct * 100:.0f}%"
         message = html.escape(ctx.get("full_message_text", "?"))
         channel = html.escape(ctx.get("channel", "?"))
         author = html.escape(ctx.get("author", "?"))
         ticker = html.escape(ctx.get("ticker", "unresolved"))
-        intent = html.escape(ctx.get("intent", "?"))
-        confidence = html.escape(ctx.get("confidence", "?"))
-        conviction = html.escape(ctx.get("conviction_bucket", "?"))
+        confidence_val = ctx.get("confidence", "?")
+        if isinstance(confidence_val, float):
+            confidence = f"{confidence_val:.2f}"
+        else:
+            confidence = html.escape(str(confidence_val))
+        bucket = html.escape(ctx.get("bucket", "?"))
         return (
             f"<b>SIGNAL PARSED</b>\n\n"
             f"Source: #{channel}\n"
             f"Author: {author}\n"
             f"Message: <i>{message}</i>\n\n"
-            f"Intent: <b>{intent}</b> ({confidence} confidence)\n"
+            f"Confidence: {confidence}\n"
             f"Ticker: <b>{ticker}</b>\n"
-            f"Conviction: {conviction} → {pct_display} allocation\n\n"
+            f"Bucket: {bucket} → {pct_display} allocation\n\n"
             f"<code>trace: {ctx.trace_id}</code>"
         )
 
@@ -98,3 +101,30 @@ class TelegramDigest(Skill):
             await self._client.send_message(text)
         except Exception as exc:
             logger.error("Skip digest delivery failed: %s", exc)
+
+    async def send_bootstrap_review_digest(self, ctx: Context) -> None:
+        import html
+        trader = html.escape(ctx.get("trader_handle", "?"))
+        author = html.escape(ctx.get("author", "?"))
+        channel = html.escape(ctx.get("channel", "?"))
+        ticker = html.escape(ctx.get("ticker") or "(no-ticker)")
+        bucket = html.escape(ctx.get("bucket", "?"))
+        size_pct = ctx.get("size_pct", 0.0)
+        size_display = f"{size_pct * 100:.0f}%"
+        confidence = ctx.get("confidence", 0.0)
+        why = html.escape(ctx.get("classifier_reason", ""))
+        msg = html.escape(ctx.get("full_message_text", ""))
+        text = (
+            f"<b>BOOTSTRAP REVIEW</b>\n\n"
+            f"Trader: {trader} ({author})\n"
+            f"Channel: #{channel}\n"
+            f"Ticker: <b>{ticker}</b>\n"
+            f"Proposed: <b>{bucket}</b> @ {size_display} (conf {confidence:.2f})\n"
+            f"Why: <i>{why}</i>\n\n"
+            f"Message:\n<i>{msg}</i>\n\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Bootstrap review delivery failed: %s", exc)

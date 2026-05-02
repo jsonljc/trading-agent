@@ -1,0 +1,30 @@
+handle: wallstengine
+display_name: Wall St Engine
+discord_author_pattern: "Wall St Engine"
+alert_mention: "@Wall - Alerts"
+require_alert_mention: true
+bot_authors_to_skip: ["WSE"]
+auto_execute: true
+size_in_message: true
+prefer_message_size: true
+classifier_model: claude-haiku-4-5
+availability_phrases: []
+conviction_examples:
+  - msg: "Added small AUDC (speculative play) 2% pos. on back of BAND earnings"
+    bucket: LOW
+    why: "speculative play, small, 2%"
+  - msg: "OPEN $SHEN — taking a stab at SHEN around 21DMA ahead of earnings Friday"
+    bucket: LOW
+    why: "stab/small horizon framing"
+  - msg: "Added a 2% position in CEG calls. After a month of consolidation, CEG looks like it's setting up for a move here."
+    bucket: LOW
+    why: "2% explicit, standard add"
+  - msg: "PORTFOLIO UPDATE - 18 POSITIONS — 94:6 EQUITY:OPTIONS RATIO ..."
+    bucket: SKIP
+    why: "portfolio recap, not an entry"
+  - msg: "FDA APPROVES ARVINAS' $ARVN VEPDEGESTRANT"
+    bucket: SKIP
+    why: "WSE bot news headline"
+  - msg: "OPEN AMBQ (edge-AI theme): Fabless ultra-low power MCU/SoC vendor. (1) a defensible subthreshold-voltage IP moat, 2x-5x lower power; (2) Google, Garmin, Whoop wearable platform exposure with disclosed ramp into mass production in 2026; (3) optionality on smart glasses, hearing aids, cardiac monitors. Looks ready to retest IPO high."
+    bucket: HIGH
+    why: "structured multi-thesis OPEN with named catalysts and themes — high-conviction entry"

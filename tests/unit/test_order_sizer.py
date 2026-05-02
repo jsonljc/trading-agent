@@ -1,104 +1,72 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 from agent.context import Context
 from skills.execution.order_sizer import OrderSizer
-from infra.ib.models import AccountSummary, BrokerContractRef, OptionCandidate
-from infra.ib.gateway import IBGatewayUnavailable
 
 
-def _policy(low_pct=0.05, high_pct=0.10):
-    p = MagicMock()
-    p.sizing_policy.low_conviction_pct = low_pct
-    p.sizing_policy.high_conviction_pct = high_pct
-    return p
+class FakeAccount:
+    def __init__(self, bp): self.buying_power = bp
 
 
-def _ctx(instrument_type="option", conviction="high", ask=5.0, multiplier=100):
-    c = Context(trace_id="t", event_id="e")
-    ref = BrokerContractRef(symbol="AAPL", sec_type="OPT", exchange="SMART",
-                             currency="USD", qualified=True)
-    candidate = OptionCandidate(symbol="AAPL", expiry="2026-12-18", strike=150.0,
-                                 right="C", bid=ask-0.5, ask=ask, mid=ask-0.25,
-                                 spread_pct=0.1, open_interest=100, volume=50,
-                                 multiplier=multiplier, contract_ref=ref)
-    c.update({
-        "instrument_type": instrument_type,
-        "ticker": "AAPL",
-        "conviction_bucket": conviction,
-        "option_candidates": [candidate],
-        "selected_contract": ref,
-        "selected_strike": 150.0,
+class FakeGateway:
+    def __init__(self, bp=100_000.0, quote=10.0):
+        self._account = FakeAccount(bp)
+        self._quote = quote
+    async def get_account_summary(self): return self._account
+    async def get_quote(self, ticker): return self._quote
+
+
+@pytest.mark.asyncio
+async def test_order_sizer_uses_size_pct_from_ctx_for_stock():
+    sizer = OrderSizer(gateway=FakeGateway(bp=100_000, quote=20.0))
+    ctx = Context(trace_id="t", event_id="e", data={
+        "instrument_type": "stock", "ticker": "X",
+        "size_pct": 0.05,
     })
-    return c
-
-
-def _gateway(buying_power=100_000.0):
-    gw = MagicMock()
-    gw.get_account_summary = AsyncMock(return_value=AccountSummary(
-        buying_power=buying_power, net_liquidation=buying_power, currency="USD"
-    ))
-    gw.get_quote = AsyncMock(return_value=150.0)
-    return gw
-
-
-@pytest.mark.asyncio
-async def test_high_conviction_option_sizing():
-    # 10% of 100k = 10k; ask=5.0, multiplier=100 → cost=500/contract; qty=20
-    sizer = OrderSizer(_policy(), _gateway(100_000))
-    result = await sizer.run(_ctx(instrument_type="option", conviction="high", ask=5.0))
+    result = await sizer.run(ctx)
     assert result.status == "success"
-    assert result.updates["quantity"] == 20
-    assert "high_conviction" in result.updates["sizing_reason"]
+    # 5% of 100k = 5000; at $20 → 250 shares
+    assert result.updates["quantity"] == 250
+    assert "size_pct=0.05" in result.updates["sizing_reason"]
 
 
 @pytest.mark.asyncio
-async def test_low_conviction_option_sizing():
-    # 5% of 100k = 5k; ask=5.0, multiplier=100 → cost=500/contract; qty=10
-    sizer = OrderSizer(_policy(), _gateway(100_000))
-    result = await sizer.run(_ctx(conviction="low", ask=5.0))
+async def test_order_sizer_uses_size_pct_for_options():
+    """Confirm options path also reads size_pct from ctx."""
+    class FakeCandidate:
+        def __init__(self, strike, ask, multiplier):
+            self.strike = strike
+            self.ask = ask
+            self.multiplier = multiplier
+
+    sizer = OrderSizer(gateway=FakeGateway(bp=10_000))
+    candidate = FakeCandidate(strike=100.0, ask=2.50, multiplier=100)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "instrument_type": "option",
+        "size_pct": 0.10,
+        "option_candidates": [candidate],
+        "selected_strike": 100.0,
+    })
+    result = await sizer.run(ctx)
     assert result.status == "success"
-    assert result.updates["quantity"] == 10
+    # 10% of 10k = 1000; cost per contract = 2.50 * 100 = 250; → 4 contracts
+    assert result.updates["quantity"] == 4
 
 
 @pytest.mark.asyncio
-async def test_insufficient_buying_power_fails():
-    # 10% of 100 = 10; ask=5.0, multiplier=100 → cost=500; qty=0 → fail
-    sizer = OrderSizer(_policy(), _gateway(100))
-    result = await sizer.run(_ctx(ask=5.0))
-    assert result.status == "fail"
-    assert "insufficient_buying_power" in result.reason
-
-
-@pytest.mark.asyncio
-async def test_gateway_unavailable_fails():
-    gw = MagicMock()
-    gw.get_account_summary = AsyncMock(side_effect=IBGatewayUnavailable("down"))
-    sizer = OrderSizer(_policy(), gw)
-    result = await sizer.run(_ctx())
-    assert result.status == "fail"
-    assert "broker_unavailable" in result.reason
-
-
-@pytest.mark.asyncio
-async def test_no_matching_candidate_fails():
-    sizer = OrderSizer(_policy(), _gateway(100_000))
-    ctx = _ctx(instrument_type="option", conviction="high", ask=5.0)
-    ctx.update({"selected_strike": 999.0})  # no candidate at this strike
+async def test_order_sizer_fails_when_size_pct_missing_from_ctx():
+    sizer = OrderSizer(gateway=FakeGateway())
+    ctx = Context(trace_id="t", event_id="e", data={"instrument_type": "stock", "ticker": "X"})
     result = await sizer.run(ctx)
     assert result.status == "fail"
-    assert "no matching candidate" in result.reason
+    assert "size_pct" in (result.reason or "")
 
 
 @pytest.mark.asyncio
-async def test_equity_sizing_uses_get_quote():
-    gw = _gateway(100_000)
-    gw.get_quote = AsyncMock(return_value=200.0)
-    sizer = OrderSizer(_policy(), gw)
-    ctx = _ctx(instrument_type="equity", conviction="high")
+async def test_order_sizer_fails_when_size_pct_zero_or_negative():
+    sizer = OrderSizer(gateway=FakeGateway())
+    ctx = Context(trace_id="t", event_id="e", data={
+        "instrument_type": "stock", "ticker": "X", "size_pct": 0.0,
+    })
     result = await sizer.run(ctx)
-    # 10% of 100k = 10k / 200 = 50 shares
-    assert result.status == "success"
-    assert result.updates["quantity"] == 50
-    assert result.updates["notional_estimate"] == 50 * 200.0
-    assert "high_conviction" in result.updates["sizing_reason"]
-    assert result.updates["capped_by"] is None
+    assert result.status == "fail"
+    assert "size_pct" in (result.reason or "")

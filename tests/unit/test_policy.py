@@ -16,9 +16,6 @@ pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
   stock_buffer_pct: 0.001
-sizing_policy:
-  low_conviction_pct: 0.05
-  high_conviction_pct: 0.10
 market_hours:
   options_rth_only: true
   stock_premarket_allowed: true
@@ -48,7 +45,6 @@ telegram:
     f = tmp_path / "policy.yaml"
     f.write_text(yaml_content)
     policy = load_policy(str(f))
-    assert policy.sizing_policy.low_conviction_pct == 0.05
     assert policy.market_hours.rth_start == "09:30"
     assert policy.telegram.chat_id == "123"
 
@@ -73,9 +69,6 @@ pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
   stock_buffer_pct: 0.001
-sizing_policy:
-  low_conviction_pct: 0.05
-  high_conviction_pct: 0.10
 market_hours:
   options_rth_only: true
   stock_premarket_allowed: true
@@ -129,9 +122,6 @@ pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
   stock_buffer_pct: 0.001
-sizing_policy:
-  low_conviction_pct: 0.05
-  high_conviction_pct: 0.10
 market_hours:
   options_rth_only: true
   stock_premarket_allowed: true
@@ -182,9 +172,6 @@ pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
   stock_buffer_pct: 0.001
-sizing_policy:
-  low_conviction_pct: 0.05
-  high_conviction_pct: 0.10
 market_hours:
   options_rth_only: true
   stock_premarket_allowed: true

@@ -144,6 +144,42 @@ CREATE VIEW IF NOT EXISTS dlq_intents AS
     SELECT * FROM trade_intents
     WHERE execution_state = 'failed'
     ORDER BY created_at DESC;
+CREATE TABLE IF NOT EXISTS classification_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL,
+    trader_handle TEXT NOT NULL,
+    msg_text TEXT NOT NULL,
+    features_json TEXT NOT NULL,
+    llm_response_json TEXT,
+    bucket TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    size_pct REAL NOT NULL,
+    size_source TEXT NOT NULL,
+    action_taken TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_classification_log_trader_time
+    ON classification_log(trader_handle, created_at);
+
+CREATE TABLE IF NOT EXISTS trader_examples_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trader_handle TEXT NOT NULL,
+    msg_text TEXT NOT NULL,
+    proposed_bucket TEXT NOT NULL,
+    proposed_why TEXT,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolved_bucket TEXT
+);
+
+CREATE TABLE IF NOT EXISTS trader_state (
+    trader_handle TEXT PRIMARY KEY,
+    unavailable_until TEXT,
+    updated_at TEXT NOT NULL
+);
 """
 
 

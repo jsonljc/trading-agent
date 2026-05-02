@@ -1,17 +1,35 @@
 from agent.skill import Skill
 
 
-def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None) -> list:
+def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
+                       trader_registry=None, classification_log_store=None,
+                       llm_classifier=None) -> list:
     from skills.signal.message_normalizer import MessageNormalizer
     from skills.signal.desktop_reader import DesktopReader
-    from skills.signal.signal_analyzer import SignalAnalyzer
+    from skills.signal.trader_router import TraderRouter
+    from skills.signal.trader_classifier import TraderClassifier
+    from skills.signal.classification_logger import ClassificationLogger
+    from skills.signal.entry_skip_gate import EntrySkipGate
+    from skills.signal.bootstrap_review_gate import BootstrapReviewGate
     from skills.risk.idempotency_check import IdempotencyCheck
     from skills.posttrade.telegram_digest import TelegramDigest
 
-    skills_list = [
+    if trader_registry is None:
+        raise ValueError("trader_registry is required for the conviction-classifier pipeline")
+    if classification_log_store is None:
+        raise ValueError("classification_log_store is required")
+    if llm_classifier is None:
+        raise ValueError("llm_classifier is required")
+
+    digest = TelegramDigest(telegram_client, mode="signal_only")
+    skills_list: list[Skill] = [
         MessageNormalizer(policy),
         DesktopReader(policy),
-        SignalAnalyzer(policy),
+        TraderRouter(trader_registry),
+        TraderClassifier(trader_registry, llm_classifier),
+        ClassificationLogger(classification_log_store),
+        EntrySkipGate(),                            # NEW: terminate non-actionable
+        BootstrapReviewGate(digest),
         IdempotencyCheck(policy, idempotency_store),
     ]
 
@@ -19,7 +37,7 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None)
         from skills.signal.ticker_validator import TickerValidator
         skills_list.append(TickerValidator(gateway))
 
-    skills_list.append(TelegramDigest(telegram_client, mode="signal_only"))
+    skills_list.append(digest)
     return skills_list
 
 
@@ -49,7 +67,7 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
         ChainLookup(gateway, execution_store._conn),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         PriceWalker(policy, gateway, trade_intent_store),
     ]
