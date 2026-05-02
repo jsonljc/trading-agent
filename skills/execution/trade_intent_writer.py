@@ -31,7 +31,7 @@ class TradeIntentWriter(Skill):
                     reason=f"trade_intent_writer: unknown intent {phase1_intent!r}; expected LONG_SIGNAL or ADD_SIGNAL",
                 )
 
-        conviction = ctx.get("conviction") or ctx.get("conviction_bucket", "medium")
+        conviction = ctx.get("bucket") or ctx.get("conviction", "LOW")
 
         now = datetime.now(timezone.utc).isoformat()
         intent_id = f"{ctx.event_id}:{ticker}:{side}"
@@ -52,7 +52,7 @@ class TradeIntentWriter(Skill):
             "rationale": ctx.get("reason"),
             "ticker_raw": ctx.get("ticker_raw", ticker),
             "side_raw": ctx.get("side_raw") or ctx.get("intent"),
-            "conviction_raw": ctx.get("conviction_raw") or ctx.get("conviction_bucket"),
+            "conviction_raw": ctx.get("conviction_raw") or ctx.get("bucket"),
             "reference_spot_price": None,
             "reference_spot_timestamp": None,
             "policy_state": "approved",

@@ -11,8 +11,7 @@ logger = logging.getLogger(__name__)
 class OrderSizer(Skill):
     name = "OrderSizer"
 
-    def __init__(self, policy, gateway) -> None:
-        self._policy = policy
+    def __init__(self, gateway) -> None:
         self._gateway = gateway
 
     async def run(self, ctx: Context) -> SkillResult:

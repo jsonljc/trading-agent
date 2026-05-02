@@ -17,7 +17,7 @@ class FakeGateway:
 
 @pytest.mark.asyncio
 async def test_order_sizer_uses_size_pct_from_ctx_for_stock():
-    sizer = OrderSizer(policy=None, gateway=FakeGateway(bp=100_000, quote=20.0))
+    sizer = OrderSizer(gateway=FakeGateway(bp=100_000, quote=20.0))
     ctx = Context(trace_id="t", event_id="e", data={
         "instrument_type": "stock", "ticker": "X",
         "size_pct": 0.05,
@@ -38,7 +38,7 @@ async def test_order_sizer_uses_size_pct_for_options():
             self.ask = ask
             self.multiplier = multiplier
 
-    sizer = OrderSizer(policy=None, gateway=FakeGateway(bp=10_000))
+    sizer = OrderSizer(gateway=FakeGateway(bp=10_000))
     candidate = FakeCandidate(strike=100.0, ask=2.50, multiplier=100)
     ctx = Context(trace_id="t", event_id="e", data={
         "instrument_type": "option",
@@ -54,7 +54,7 @@ async def test_order_sizer_uses_size_pct_for_options():
 
 @pytest.mark.asyncio
 async def test_order_sizer_fails_when_size_pct_missing_from_ctx():
-    sizer = OrderSizer(policy=None, gateway=FakeGateway())
+    sizer = OrderSizer(gateway=FakeGateway())
     ctx = Context(trace_id="t", event_id="e", data={"instrument_type": "stock", "ticker": "X"})
     result = await sizer.run(ctx)
     assert result.status == "fail"
@@ -63,7 +63,7 @@ async def test_order_sizer_fails_when_size_pct_missing_from_ctx():
 
 @pytest.mark.asyncio
 async def test_order_sizer_fails_when_size_pct_zero_or_negative():
-    sizer = OrderSizer(policy=None, gateway=FakeGateway())
+    sizer = OrderSizer(gateway=FakeGateway())
     ctx = Context(trace_id="t", event_id="e", data={
         "instrument_type": "stock", "ticker": "X", "size_pct": 0.0,
     })

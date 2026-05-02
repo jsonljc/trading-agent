@@ -67,7 +67,7 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
         ChainLookup(gateway, execution_store._conn),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         PriceWalker(policy, gateway, trade_intent_store),
     ]

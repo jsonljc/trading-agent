@@ -12,10 +12,6 @@ pricing_policy:
   option_spread_fraction: 0.25
   stock_buffer_pct: 0.001
 
-sizing_policy:
-  low_conviction_pct: 0.05
-  high_conviction_pct: 0.10
-
 market_hours:
   options_rth_only: true
   stock_premarket_allowed: true

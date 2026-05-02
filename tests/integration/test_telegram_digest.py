@@ -16,8 +16,8 @@ def make_ctx(**kwargs) -> Context:
         "channel": "mystic", "author": "Mystic",
         "full_message_text": "Long $AVEX today",
         "intent": "LONG_SIGNAL", "confidence": "high",
-        "ticker": "AVEX", "conviction_bucket": "high",
-        "target_allocation_pct": 0.10,
+        "ticker": "AVEX", "bucket": "HIGH",
+        "size_pct": 0.10,
         **kwargs,
     })
     return ctx

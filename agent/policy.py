@@ -21,11 +21,6 @@ class PricingPolicy(BaseModel):
     stock_buffer_pct: float
 
 
-class SizingPolicy(BaseModel):
-    low_conviction_pct: float
-    high_conviction_pct: float
-
-
 class MarketHours(BaseModel):
     options_rth_only: bool
     stock_premarket_allowed: bool
@@ -106,7 +101,6 @@ class PolicyModel(BaseModel):
     trigger: TriggerPolicy
     instrument_policy: InstrumentPolicy
     pricing_policy: PricingPolicy
-    sizing_policy: SizingPolicy
     market_hours: MarketHours
     cooldown_policy: CooldownPolicy
     dedupe_policy: DedupePolicy

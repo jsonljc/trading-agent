@@ -44,8 +44,6 @@ def _policy():
     p.pricing_policy_guards.max_spread_pct = 0.40
     p.pricing_policy.option_spread_fraction = 0.25
     p.pricing_policy.stock_buffer_pct = 0.001
-    p.sizing_policy.low_conviction_pct = 0.05
-    p.sizing_policy.high_conviction_pct = 0.10
     p.execution.fill_wait_timeout_seconds = 1.0
     p.execution.max_equity_price = 500.0
     return p
@@ -108,7 +106,7 @@ async def test_full_execution_pipeline_happy_path(db):
         ChainLookup(gateway, db),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         OrderSubmitter(gateway, execution_store),
         FillWaiter(gateway, execution_store, timeout=1.0),
@@ -119,7 +117,7 @@ async def test_full_execution_pipeline_happy_path(db):
     ctx.update({
         "signal_id": "sig-1",
         "ticker": "AAPL",
-        "conviction_bucket": "high",
+        "size_pct": 0.10,
         "spot_price": 152.0,  # 150 is ITM
     })
 
@@ -149,7 +147,7 @@ async def test_broker_unavailable_fails_pipeline(db):
         ChainLookup(gateway, db),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         OrderSubmitter(gateway, execution_store),
         FillWaiter(gateway, execution_store, timeout=1.0),
@@ -157,7 +155,7 @@ async def test_broker_unavailable_fails_pipeline(db):
 
     orch = Orchestrator(chain, trace_store)
     ctx = Context(trace_id="t2", event_id="e2")
-    ctx.update({"signal_id": "sig-2", "ticker": "AAPL", "conviction_bucket": "high", "spot_price": 152.0})
+    ctx.update({"signal_id": "sig-2", "ticker": "AAPL", "size_pct": 0.10, "spot_price": 152.0})
 
     await orch.run(ctx)
 
@@ -182,7 +180,7 @@ async def test_intent_row_created_on_happy_path(db):
         ChainLookup(gateway, db),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         OrderSubmitter(gateway, execution_store),
         FillWaiter(gateway, execution_store, timeout=1.0),
@@ -193,7 +191,7 @@ async def test_intent_row_created_on_happy_path(db):
     ctx.update({
         "signal_id": "sig-intent-1",
         "ticker": "AAPL",
-        "conviction_bucket": "high",
+        "size_pct": 0.10,
         "spot_price": 152.0,
         "channel": "mystic",
         "intent": "LONG_SIGNAL",
@@ -225,7 +223,7 @@ async def test_channel_blocked_skips_execution(db):
         ChainLookup(gateway, db),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         OrderSubmitter(gateway, execution_store),
         FillWaiter(gateway, execution_store, timeout=1.0),
@@ -236,7 +234,7 @@ async def test_channel_blocked_skips_execution(db):
     ctx.update({
         "signal_id": "sig-blocked-1",
         "ticker": "AAPL",
-        "conviction_bucket": "high",
+        "size_pct": 0.10,
         "spot_price": 152.0,
         "channel": "mystic",
         "intent": "LONG_SIGNAL",
@@ -300,7 +298,7 @@ async def test_price_walker_fills_on_first_step(db):
         ChainLookup(gateway, db),
         InstrumentMarketabilityGuard(policy),
         ContractSelector(policy),
-        OrderSizer(policy, gateway),
+        OrderSizer(gateway),
         OrderPricer(policy),
         PriceWalker(policy, gateway, intent_store),
     ]
@@ -310,7 +308,7 @@ async def test_price_walker_fills_on_first_step(db):
     ctx.update({
         "signal_id": "sig-pw-1",
         "ticker": "AAPL",
-        "conviction_bucket": "high",
+        "size_pct": 0.10,
         "spot_price": 152.0,
         "intent_id": "evt-pw-1:AAPL:long",
         "action": "BUY",
