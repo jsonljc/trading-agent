@@ -16,12 +16,21 @@ async def promote_one(store: ExamplesPendingStore, pending_id: int,
         raise SystemExit(f"pending id {pending_id} not found or already resolved")
 
     raw = yaml.safe_load(yaml_path.read_text())
-    raw.setdefault("conviction_examples", []).append({
+    if not isinstance(raw, dict):
+        raise SystemExit(f"profile yaml malformed (not a mapping): {yaml_path}")
+    examples = raw.get("conviction_examples")
+    if examples is None:
+        raw["conviction_examples"] = []
+    elif not isinstance(examples, list):
+        raise SystemExit(f"profile yaml malformed (conviction_examples not a list): {yaml_path}")
+    raw["conviction_examples"].append({
         "msg": pending["msg_text"],
         "bucket": approved_bucket,
         "why": why_override or pending.get("proposed_why") or "",
     })
-    yaml_path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
+    tmp_path = yaml_path.with_suffix(yaml_path.suffix + ".tmp")
+    tmp_path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
+    tmp_path.replace(yaml_path)
     await store.resolve(pending_id, status="approved", resolved_bucket=approved_bucket)
 
 
@@ -79,6 +88,10 @@ async def _async_main(argv: list[str]) -> int:
             print(f"promoted id={args.id} → {pending['trader_handle']} as {args.bucket}")
             return 0
         if args.cmd == "reject":
+            pending = await _find_pending(store, args.id)
+            if pending is None:
+                print(f"pending id {args.id} not found", file=sys.stderr)
+                return 2
             await store.resolve(args.id, status="rejected", resolved_bucket=None)
             print(f"rejected id={args.id}")
             return 0
