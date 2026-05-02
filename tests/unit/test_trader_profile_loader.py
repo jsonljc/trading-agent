@@ -35,7 +35,7 @@ def test_load_profile_parses_all_fields(tmp_path: Path):
     assert profile.require_alert_mention is True
     assert profile.auto_execute is True
     assert profile.classifier_model == "claude-haiku-4-5"
-    assert profile.availability_phrases == ["off the grid"]
+    assert profile.availability_phrases == ("off the grid",)
     assert len(profile.conviction_examples) == 2
     assert profile.conviction_examples[0] == ConvictionExample(
         msg="Added 2% TEST", bucket="LOW", why="explicit 2%"
@@ -43,10 +43,24 @@ def test_load_profile_parses_all_fields(tmp_path: Path):
 
 
 def test_load_profile_rejects_invalid_bucket(tmp_path: Path):
-    bad = YAML_TEXT.replace("bucket: LOW", "bucket: BANANA")
+    bad_yaml = YAML_TEXT + "  - msg: bad\n    bucket: BANANA\n    why: test\n"
     p = tmp_path / "bad.yaml"
-    p.write_text(bad)
-    with pytest.raises(ValueError, match="invalid bucket"):
+    p.write_text(bad_yaml)
+    with pytest.raises(ValueError, match="invalid bucket 'BANANA'"):
+        load_profile(p)
+
+
+def test_load_profile_rejects_empty_yaml(tmp_path: Path):
+    p = tmp_path / "empty.yaml"
+    p.write_text("")
+    with pytest.raises(ValueError, match="expected a YAML mapping"):
+        load_profile(p)
+
+
+def test_load_profile_rejects_missing_required_field(tmp_path: Path):
+    p = tmp_path / "incomplete.yaml"
+    p.write_text("display_name: only this\n")
+    with pytest.raises(ValueError, match="missing required fields"):
         load_profile(p)
 
 
@@ -54,5 +68,5 @@ def test_load_all_profiles_reads_directory(tmp_path: Path):
     (tmp_path / "a.yaml").write_text(YAML_TEXT)
     (tmp_path / "b.yaml").write_text(YAML_TEXT.replace("testtrader", "second"))
     profiles = load_all_profiles(tmp_path)
-    handles = {p.handle for p in profiles}
-    assert handles == {"testtrader", "second"}
+    # Files are sorted alphabetically by filename, so a.yaml (testtrader) before b.yaml (second).
+    assert [p.handle for p in profiles] == ["testtrader", "second"]
