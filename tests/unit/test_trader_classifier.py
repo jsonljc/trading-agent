@@ -145,3 +145,22 @@ async def test_stated_size_capped_at_10pct():
     assert ctx.get("size_pct") == 0.10
     assert ctx.get("size_source") == "shortcut_stated"
     assert ctx.get("ticker") == "XX"
+
+
+@pytest.mark.asyncio
+async def test_shortcut_threshold_at_7_5_pct_buckets_high():
+    profile = make_profile()
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": True, "ticker": "X", "side": "long",
+                   "bucket": "HIGH", "confidence": 0.9, "reason": "x"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Wall St Engine", "trader_handle": "wse",
+        "full_message_text": "Added 7.5% pos AAPL",
+    })
+
+    result = await classifier.run(ctx)
+    assert result.status == "success"
+    assert ctx.get("size_pct") == 0.075
+    assert ctx.get("bucket") == "HIGH"
+    assert ctx.get("size_source") == "shortcut_stated"

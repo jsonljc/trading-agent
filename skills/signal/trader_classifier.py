@@ -17,6 +17,7 @@ DROP_CONF_THRESHOLD = 0.50
 SIZE_LOW = 0.05
 SIZE_HIGH = 0.10
 MAX_STATED_SIZE = 0.10  # cap at 10%
+SIZE_HIGH_SHORTCUT_THRESHOLD = 0.075  # bucket=HIGH in shortcut path when size_pct >= this
 
 _SYSTEM_PREAMBLE = """You classify Discord trading messages from a single trader into one of three buckets: HIGH, LOW, SKIP.
 
@@ -72,7 +73,7 @@ class TraderClassifier(Skill):
         ):
             size_pct = min(features.stated_size_pct / 100.0, MAX_STATED_SIZE)
             # >=7.5% → HIGH bookkeeping; this is informational only since size_pct already won.
-            bucket = "HIGH" if size_pct >= SIZE_LOW * 1.5 else "LOW"
+            bucket = "HIGH" if size_pct >= SIZE_HIGH_SHORTCUT_THRESHOLD else "LOW"
             updates = {
                 "ticker": features.tickers_in_msg[0],
                 "side": "long",
