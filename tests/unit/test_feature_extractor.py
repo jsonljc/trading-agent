@@ -5,7 +5,8 @@ def test_extracts_stated_size_pct_and_entry_verb():
     f = extract_features("Added a 2% position in CEG calls. Looking for a move.")
     assert f.stated_size_pct == 2.0
     assert f.entry_verb_present is True
-    assert "CEG" in f.tickers_in_msg
+    assert f.tickers_in_msg == ("CEG",)
+    assert isinstance(f.tickers_in_msg, tuple)
 
 
 def test_extracts_dollar_prefixed_tickers():
@@ -36,3 +37,8 @@ def test_size_capped_phrase_match_case_insensitive():
     f = extract_features("ADDED 5% pos AAPL")
     assert f.stated_size_pct == 5.0
     assert f.entry_verb_present is True
+
+
+def test_single_letter_uppercase_words_are_not_tickers():
+    f = extract_features("I think A is interesting today")
+    assert f.tickers_in_msg == ()

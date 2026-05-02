@@ -46,7 +46,7 @@ def extract_features(
         tickers = tuple(
             dict.fromkeys(
                 t for t in _TICKERS.findall(msg)
-                if t.isupper() and 1 <= len(t) <= 6
+                if t.isupper() and 2 <= len(t) <= 6
             )
         )
 
