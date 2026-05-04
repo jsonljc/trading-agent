@@ -263,7 +263,14 @@ class IBGateway:
     async def get_account_summary(self) -> AccountSummary:
         self._read_breaker.check()
         try:
-            summary = await self._ib.reqAccountSummaryAsync()
+            # Use accountSummaryAsync (auto-subscribes + reads cache); NOT
+            # reqAccountSummaryAsync, whose future resolves to an empty list
+            # and silently yields buying_power=0 → allocation=0 in OrderSizer.
+            summary = await self._ib.accountSummaryAsync()
+            if not summary:
+                raise IBGatewayUnavailable(
+                    "account summary returned no rows — check IB API method"
+                )
             values = {item.tag: item.value for item in summary}
             result = AccountSummary(
                 buying_power=float(values.get("BuyingPower", 0)),
