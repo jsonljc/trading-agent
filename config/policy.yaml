@@ -39,21 +39,19 @@ models:
 watched_channels:
   # For channels routed to a trader profile in config/traders/, the per-trader
   # auto_execute flag is the source of truth — these channel-level flags must
-  # match. WSE → autonomous, STW + Mystic → bootstrap-review until validated.
+  # match.
   mystic:
-    auto_execute: false        # Mystic profile: auto_execute=false (bootstrap)
+    auto_execute: true
   wall-st-engine:
-    auto_execute: true         # WSE profile: auto_execute=true (autonomous)
+    auto_execute: true
   stock-talk-portfolio:
-    auto_execute: false        # STW profile: auto_execute=false (bootstrap)
+    auto_execute: true
   alerts:
     auto_execute: true
   trades:
     auto_execute: true
   chat:
     auto_execute: false
-  yonezu:
-    auto_execute: true
   pup-danny:
     auto_execute: true
   urkel:
@@ -100,7 +98,5 @@ discord_extension:
     # config/traders/ must have at least one ID listed here, or messages
     # from that channel will never reach the agent.
     "1229546005788098580": mystic
-    "1248378121451733083": yonezu
+    "1248378121451733083": wall-st-engine
     "1217309136681832540": stock-talk-portfolio
-    # TODO operator: fill in the real channel ID for Wall St Engine.
-    "REPLACE_ME_WSE_CHANNEL_ID": wall-st-engine

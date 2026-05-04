@@ -4,7 +4,7 @@ discord_author_pattern: "Stock Talk Weekly"
 alert_mention: "@Stock Talk Weekly - Alerts"
 require_alert_mention: true
 bot_authors_to_skip: []
-auto_execute: false
+auto_execute: true
 size_in_message: true
 prefer_message_size: true
 classifier_model: claude-haiku-4-5
