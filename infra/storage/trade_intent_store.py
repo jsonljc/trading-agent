@@ -130,3 +130,46 @@ class TradeIntentStore:
             "SELECT * FROM trade_intents WHERE outbox_status IN ('pending', 'dispatched')"
         ) as cur:
             return await cur.fetchall()
+
+    async def write(
+        self,
+        *,
+        intent_id: str,
+        event_id: str,
+        channel: str,
+        ticker: str,
+        side: str,
+        instrument_type: str,
+        parent_intent_id: str | None,
+        expiry: str | None,
+        strike: float | None,
+        right: str | None,
+        conviction: str,
+        fill_price: float | None,
+        fill_qty: int | None,
+        execution_state: str,
+        signal_received_at: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "intent_id": intent_id,
+            "event_id": event_id,
+            "channel": channel,
+            "ticker": ticker,
+            "side": side,
+            "instrument_type": instrument_type,
+            "parent_intent_id": parent_intent_id,
+            "expiry": expiry,
+            "strike": strike,
+            "right": right,
+            "conviction": conviction,
+            "fill_price": fill_price,
+            "fill_qty": fill_qty,
+            "execution_state": execution_state,
+            "policy_state": "approved",
+            "signal_received_at": signal_received_at,
+            "intent_created_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self.insert(record)
