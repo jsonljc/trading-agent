@@ -144,8 +144,12 @@ class TraderClassifier(Skill):
                                reason=f"ticker_not_in_msg:{ticker_upper}")
 
         if confidence < DROP_CONF_THRESHOLD:
+            # bucket="SKIP" so EntrySkipGate halts the pipeline. Without this,
+            # a low-confidence HIGH/LOW from the LLM would propagate through
+            # EntrySkipGate (which only halts on SKIP/None) and execute at
+            # full per-channel sizing.
             updates = {
-                "bucket": bucket, "confidence": confidence,
+                "bucket": "SKIP", "confidence": confidence,
                 "size_pct": 0.0, "size_source": "drop_low_conf",
                 "classifier_features_json": features_json,
                 "classifier_llm_response_json": llm_json,

@@ -86,30 +86,6 @@ async def test_logger_records_fired_action_for_autonomous():
         assert rows[0]["action_taken"] == "fired"
 
 
-@pytest.mark.asyncio
-async def test_logger_records_bootstrap_review_for_non_autonomous():
-    async with aiosqlite.connect(":memory:") as conn:
-        conn.row_factory = aiosqlite.Row
-        await conn.executescript(SCHEMA)
-        await conn.commit()
-
-        store = ClassificationLogStore(conn)
-        logger = ClassificationLogger(store)
-        ctx = Context(trace_id="t", event_id="e", data={
-            "trader_handle": "mystic",
-            "trader_auto_execute": False,
-            "full_message_text": "swing trade INDI",
-            "bucket": "LOW",
-            "confidence": 0.85,
-            "size_pct": 0.05,
-            "size_source": "bucket_low",
-            "classifier_features_json": "{}",
-            "classifier_llm_response_json": None,
-            "classifier_reason": "swing trade self-label",
-        })
-        await logger.run(ctx)
-        rows = await store.recent_for_trader("mystic")
-        assert rows[0]["action_taken"] == "bootstrap_review"
 
 
 @pytest.mark.asyncio

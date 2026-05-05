@@ -57,12 +57,34 @@ async def test_rejects_short_expiry():
 
 
 @pytest.mark.asyncio
-async def test_equity_fallback_returns_stk_contract():
+async def test_uses_reference_price_when_spot_price_missing():
+    # Regression: spot_price is unset by the live chain. Selector must fall
+    # back to reference_price (set by ReferencePriceCapture upstream),
+    # otherwise it always picks the cheapest OTM call (strike < 0.0 == empty
+    # ITM set) regardless of where price actually is.
+    candidates = [_candidate(140), _candidate(150), _candidate(160)]
     selector = ContractSelector(_policy())
-    result = await selector.run(_ctx(instrument_type="equity"))
+    ctx = Context(trace_id="t", event_id="e")
+    ctx.update({
+        "option_candidates": candidates,
+        "ticker": "AAPL",
+        "reference_price": 155.0,  # spot_price intentionally absent
+    })
+    result = await selector.run(ctx)
     assert result.status == "success"
-    assert result.updates["selected_contract"].sec_type == "STK"
-    assert result.updates["selected_contract"].qualified is False
+    # Without the fallback, this would be 140 (lowest-strike OTM at spot=0).
+    assert result.updates["selected_strike"] == 150.0
+
+
+@pytest.mark.asyncio
+async def test_partial_when_shares_already_filled():
+    # Once shares_intent_id is set, no eligible contract → partial-success, not fail.
+    selector = ContractSelector(_policy())
+    ctx = _ctx(candidates=[], spot=155.0)
+    ctx.update({"shares_intent_id": "shares-1"})
+    result = await selector.run(ctx)
+    assert result.status == "success"
+    assert result.updates["partial_execution_reason"].startswith("no_eligible_contract")
 
 
 @pytest.mark.asyncio

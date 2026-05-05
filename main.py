@@ -113,8 +113,16 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
     async def on_success(ctx: Context) -> None:
         await audit_writer.write(ctx, "success")
-        if ctx.get("fill_status"):
-            await digest_skill.send_fill_digest(ctx)
+        partial = ctx.get("partial_execution_reason")
+        shares_intent_id = ctx.get("shares_intent_id")
+        if partial and shares_intent_id:
+            try:
+                await trade_intent_store.update_partial_execution_reason(
+                    shares_intent_id, partial
+                )
+            except Exception:
+                logger.exception("failed to persist partial_execution_reason")
+        await digest_skill.send_fill_digest(ctx)
 
     orch = Orchestrator(full_chain, trace_store, on_skip=on_skip, on_fail=on_fail, on_success=on_success)
 
@@ -165,9 +173,7 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         await reader.start(handle_event)
     finally:
         await exit_ladder.stop()
-        # ExecutionReconciler does not expose a stop() method — clean shutdown
-        # of the reconciler loop is out of scope; it will be cancelled by the
-        # event loop when the process exits.
+        await reconciler.stop()
         await gateway.disconnect()
         await conn.close()
 

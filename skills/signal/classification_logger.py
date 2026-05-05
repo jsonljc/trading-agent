@@ -55,6 +55,4 @@ class ClassificationLogger(Skill):
             return "ticker_not_in_msg"
         if bucket in (None, "SKIP"):
             return "skipped"
-        if not ctx.get("trader_auto_execute", False):
-            return "bootstrap_review"
         return "fired"

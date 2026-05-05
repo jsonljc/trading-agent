@@ -2,6 +2,10 @@ trigger:
   action_words: ["long", "initiating", "starting position", "adding"]
 
 instrument_policy:
+  # 180d minimum is intentional: shares-first design treats options as a
+  # long-dated convex-leverage sleeve. If chains commonly fail eligibility,
+  # the options leg simply records a partial_execution_reason and the shares
+  # leg still fills.
   min_expiry_days: 180
   strike_policy: closest_itm_call
 
@@ -30,33 +34,12 @@ models:
   text: claude-haiku-4-5-20251001
 
 watched_channels:
-  # For channels routed to a trader profile in config/traders/, the per-trader
-  # auto_execute flag is the source of truth — these channel-level flags must
-  # match.
-  mystic:
-    auto_execute: true
-  wall-st-engine:
-    auto_execute: true
-  stock-talk-portfolio:
-    auto_execute: true
-  alerts:
-    auto_execute: true
-  trades:
-    auto_execute: true
-  chat:
-    auto_execute: false
-  pup-danny:
-    auto_execute: true
-  urkel:
-    auto_execute: true
-  gladiator:
-    auto_execute: true
-  graddox:
-    auto_execute: true
-  phat:
-    auto_execute: true
-  grid:
-    auto_execute: true
+  # Tracked-channel registry. auto_execute lives on the trader profile.
+  mystic: {}
+  wallstengine: {}
+  stocktalkweekly: {}
+  pup-danny: {}
+  urkel: {}
 
 discord_bundle_id: "com.hnc.Discord"
 telegram:
@@ -89,7 +72,7 @@ execution:
       high: { shares: 0.10, options: 0.05 }
       low:  { shares: 0.05, options: 0.05 }
     per_channel:
-      stock-talk-portfolio:
+      stocktalkweekly:
         high: { shares: 0.20, options: 0.05 }
         low:  { shares: 0.15, options: 0.05 }
       mystic:

@@ -28,6 +28,12 @@ async def fire_rung_if_crossed(
     if current_price < threshold_price:
         return False
 
+    # Claim the rung before placing the order so an overlapping tick cannot
+    # double-fire while wait_fill is in-flight.
+    started_at = datetime.now(timezone.utc).isoformat()
+    if not await trim_store.claim_for_fire(intent_id, rung, started_at):
+        return False  # another tick already owns this rung
+
     trim_qty = _round_half_up_min1(original_qty * trim_pct)
     contract = await gw.qualify_equity(ticker)
     order = PreparedOrder(action="SELL", quantity=trim_qty, order_type="MKT",
@@ -38,6 +44,7 @@ async def fire_rung_if_crossed(
         fill = await gw.wait_fill(trade, timeout=30.0)
     except IBGatewayUnavailable as exc:
         logger.error("trim sell broker unavailable: %s", exc)
+        await trim_store.release_claim(intent_id, rung)
         return False
 
     await trim_store.record_fire(

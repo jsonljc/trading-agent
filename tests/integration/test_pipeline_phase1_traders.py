@@ -87,36 +87,3 @@ async def test_skip_classifications_are_logged(db):
     assert rows[0]["action_taken"] == "skipped"
 
 
-@pytest.mark.asyncio
-async def test_mystic_bootstrap_mode_posts_to_telegram_and_skips(db):
-    profiles = load_all_profiles(REPO_ROOT / "config" / "traders")
-    registry = TraderRegistry(profiles)
-    log_store = ClassificationLogStore(db)
-    trace_store = TraceStore(db)
-    telegram_client = CapturingTelegram()
-
-    llm = StubLLM({"is_entry": True, "ticker": "INDI", "side": "long",
-                   "bucket": "LOW", "confidence": 0.85,
-                   "reason": "small swing trade self-label"})
-
-    from skills.signal.classification_logger import ClassificationLogger
-    from skills.signal.bootstrap_review_gate import BootstrapReviewGate
-    from skills.posttrade.telegram_digest import TelegramDigest
-
-    skills = [
-        TraderRouter(registry),
-        TraderClassifier(registry, llm),
-        ClassificationLogger(log_store),
-        BootstrapReviewGate(TelegramDigest(telegram_client)),
-    ]
-    orch = Orchestrator(skills, trace_store)
-    ctx = Context(trace_id="t2", event_id="e2", data={
-        "author": "UndefinedMystic",
-        "channel": "alerts",
-        "full_message_text": "i opened a small swing trade position in INDI @Alerts - Mystic",
-    })
-    await orch.run(ctx)
-
-    assert any("BOOTSTRAP REVIEW" in m for m in telegram_client.sent)
-    rows = await log_store.recent_for_trader("mystic")
-    assert rows[0]["action_taken"] == "bootstrap_review"

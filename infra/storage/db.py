@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS trade_intents (
     created_at             TEXT NOT NULL,
     updated_at             TEXT NOT NULL,
     fill_qty               INTEGER,
-    parent_intent_id       TEXT
+    parent_intent_id       TEXT,
+    partial_execution_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS trade_intent_trims (
     intent_id            TEXT NOT NULL,
@@ -145,6 +146,7 @@ CREATE TABLE IF NOT EXISTS trade_intent_trims (
     threshold_pct        REAL NOT NULL,
     trim_pct             REAL NOT NULL,
     armed_at             TEXT NOT NULL,
+    fire_started_at      TEXT,
     fired_at             TEXT,
     fire_price           REAL,
     sold_qty             INTEGER,
@@ -205,5 +207,21 @@ async def get_connection(db_path: str) -> aiosqlite.Connection:
     await conn.execute("PRAGMA synchronous=NORMAL")
     await conn.execute("PRAGMA foreign_keys=ON")
     await conn.executescript(SCHEMA)
+    await _migrate(conn)
     await conn.commit()
     return conn
+
+
+async def _migrate(conn: aiosqlite.Connection) -> None:
+    """Idempotent ALTERs for columns added after first deploy. SQLite's
+    CREATE TABLE IF NOT EXISTS does not patch existing tables."""
+    await _add_column_if_missing(conn, "trade_intents", "partial_execution_reason", "TEXT")
+    await _add_column_if_missing(conn, "trade_intent_trims", "fire_started_at", "TEXT")
+
+
+async def _add_column_if_missing(conn: aiosqlite.Connection, table: str,
+                                 column: str, decl: str) -> None:
+    async with conn.execute(f"PRAGMA table_info({table})") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    if column not in existing:
+        await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")

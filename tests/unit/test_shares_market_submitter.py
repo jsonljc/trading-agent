@@ -43,6 +43,13 @@ async def test_long_signal_places_mkt_and_arms_trims(submitter_deps):
     placed_order = gw.place_order.call_args[0][1]
     assert placed_order.order_type == "MKT"
     assert placed_order.action == "BUY"
+    # Regression: client_order_id must carry real trace_id/event_id (ctx
+    # attribute access), not the empty string from ctx.get("trace_id") which
+    # looked in the data dict.
+    client_order_id = gw.place_order.call_args[0][2]
+    assert "t1" in client_order_id
+    assert "e1" in client_order_id
+    assert "None" not in client_order_id
     intent_store.update_fill.assert_awaited_once()
     args = intent_store.update_fill.call_args.kwargs
     assert args["fill_qty"] == 100

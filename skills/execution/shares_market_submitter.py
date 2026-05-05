@@ -31,7 +31,7 @@ class SharesMarketSubmitter(Skill):
 
         order = PreparedOrder(action="BUY", quantity=qty, order_type="MKT",
                               limit_price=None, tif="DAY")
-        client_order_id = f"{ctx.get('trace_id')}:shares:{ctx.get('event_id')}"
+        client_order_id = f"{ctx.trace_id}:shares:{ctx.event_id}"
         try:
             trade = await self._gateway.place_order(contract, order, client_order_id)
             fill = await self._gateway.wait_fill(trade, timeout=self._timeout)

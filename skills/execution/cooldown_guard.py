@@ -15,6 +15,9 @@ class CooldownGuard(Skill):
         self._store = trade_intent_store
 
     async def run(self, ctx: Context) -> SkillResult:
+        # Note: this guard is a read-then-skip check, not a transactional
+        # claim. Two concurrent signals for the same ticker that both arrive
+        # before either fills will both pass — accepted as a rare edge case.
         cp = self._policy.cooldown_policy
         if not cp.enabled:
             return SkillResult(status="success")

@@ -37,6 +37,8 @@ async def test_fires_at_threshold_and_records():
     ))
     trims = MagicMock()
     trims.record_fire = AsyncMock()
+    trims.claim_for_fire = AsyncMock(return_value=True)
+    trims.release_claim = AsyncMock()
     fired = await fire_rung_if_crossed(
         gw=gw, trim_store=trims,
         intent_id="i1", ticker="AAPL",
@@ -50,6 +52,7 @@ async def test_fires_at_threshold_and_records():
     assert placed.action == "SELL"
     assert placed.quantity == 40
     trims.record_fire.assert_awaited_once()
+    trims.claim_for_fire.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -67,6 +70,8 @@ async def test_rounds_trim_qty_minimum_one():
     ))
     trims = MagicMock()
     trims.record_fire = AsyncMock()
+    trims.claim_for_fire = AsyncMock(return_value=True)
+    trims.release_claim = AsyncMock()
     fired = await fire_rung_if_crossed(
         gw=gw, trim_store=trims,
         intent_id="i1", ticker="AAPL",
@@ -76,6 +81,28 @@ async def test_rounds_trim_qty_minimum_one():
     assert fired is True
     placed = gw.place_order.call_args[0][1]
     assert placed.quantity >= 1
+
+
+@pytest.mark.asyncio
+async def test_skips_when_claim_fails():
+    """If another tick already claimed the rung, fire_rung_if_crossed must
+    short-circuit before placing any broker order."""
+    gw = MagicMock()
+    gw.place_order = AsyncMock()
+    gw.qualify_equity = AsyncMock()
+    trims = MagicMock()
+    trims.claim_for_fire = AsyncMock(return_value=False)
+    trims.record_fire = AsyncMock()
+    fired = await fire_rung_if_crossed(
+        gw=gw, trim_store=trims,
+        intent_id="i1", ticker="AAPL",
+        avg_fill_price=100.0, original_qty=100,
+        rung=1, threshold_pct=0.05, trim_pct=0.40,
+        current_price=105.0,
+    )
+    assert fired is False
+    gw.place_order.assert_not_awaited()
+    trims.record_fire.assert_not_awaited()
 
 
 def test_in_rth():

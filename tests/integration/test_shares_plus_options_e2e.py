@@ -310,15 +310,16 @@ async def test_options_chase_guard_skips_when_price_chased():
         "spot_price": 100.0,
     })
 
-    chain_stopped_at = None
+    partial_set_by = None
     for skill in chain:
         result = await skill.run(ctx)
         if result.status == "fail":
             pytest.fail(f"Chain failed at {skill.name}: {result.reason}")
         if result.updates:
             ctx.update(result.updates)
+            if "partial_execution_reason" in result.updates and partial_set_by is None:
+                partial_set_by = skill.name
         if result.status == "skip":
-            chain_stopped_at = skill.name
             break
 
     # Shares filled
@@ -328,7 +329,9 @@ async def test_options_chase_guard_skips_when_price_chased():
     rows = await trims.unfired_for_intent(intent_id)
     assert len(rows) == 2
 
-    # Options were skipped due to price chase
-    assert chain_stopped_at == "OptionsChaseGuard"
+    # Options leg recorded a chase-guard partial reason rather than failing
+    # the trace — shares-filled trades must not be marked failed/skipped.
+    assert partial_set_by == "OptionsChaseGuard"
+    assert "options_chase_skip" in ctx.get("partial_execution_reason")
 
     await db.close()

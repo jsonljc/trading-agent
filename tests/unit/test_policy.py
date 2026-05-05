@@ -124,10 +124,8 @@ models:
   vision: claude-opus-4-7
   text: claude-haiku-4-5-20251001
 watched_channels:
-  mystic:
-    auto_execute: true
-  chat:
-    auto_execute: false
+  mystic: {}
+  chat: {}
 discord_bundle_id: "com.hnc.Discord"
 telegram:
   chat_id: "123"
@@ -136,8 +134,8 @@ telegram:
     import yaml
     from agent.policy import PolicyModel
     policy = PolicyModel.model_validate(yaml.safe_load(raw))
-    assert policy.watched_channels["mystic"].auto_execute is True
-    assert policy.watched_channels["chat"].auto_execute is False
+    assert "mystic" in policy.watched_channels
+    assert "chat" in policy.watched_channels
     assert policy.cooldown_policy.cooldown_minutes == 30
 
 

@@ -25,7 +25,9 @@ class MarketHours(BaseModel):
 
 
 class ChannelConfig(BaseModel):
-    auto_execute: bool = False
+    # auto_execute moved to trader profile (single source of truth). The
+    # watched_channels dict now serves only as a tracked-channel registry.
+    model_config = {"extra": "ignore"}
 
 
 class CooldownPolicy(BaseModel):

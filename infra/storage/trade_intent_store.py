@@ -111,6 +111,16 @@ class TradeIntentStore:
         )
         await self._conn.commit()
 
+    async def update_partial_execution_reason(
+        self, intent_id: str, reason: str
+    ) -> None:
+        await self._conn.execute(
+            "UPDATE trade_intents SET partial_execution_reason=?, updated_at=? "
+            "WHERE intent_id=?",
+            (reason, datetime.now(timezone.utc).isoformat(), intent_id),
+        )
+        await self._conn.commit()
+
     async def get_filled_since(self, ticker: str, since: str) -> list[aiosqlite.Row]:
         async with self._conn.execute(
             """SELECT * FROM trade_intents

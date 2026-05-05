@@ -110,6 +110,11 @@ async def test_llm_path_low_confidence_drops():
     assert result.status == "success"
     assert "low_confidence" in (result.reason or "")
     assert ctx.get("size_pct") == 0.0
+    # Regression: bucket MUST be "SKIP" so EntrySkipGate halts the pipeline.
+    # If bucket leaks through as LLM's HIGH/LOW value, low-confidence signals
+    # would execute at full per-channel sizing.
+    assert ctx.get("bucket") == "SKIP"
+    assert ctx.get("size_source") == "drop_low_conf"
 
 
 @pytest.mark.asyncio

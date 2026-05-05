@@ -11,8 +11,11 @@ def test_live_policy_yaml_loads():
     assert cm["1221605346305642558"] == "pup-danny"
     assert cm["1151611275709788253"] == "urkel"
     s = pol.execution.sizing
-    assert s.per_channel["stock-talk-portfolio"].high.shares == 0.20
+    assert s.per_channel["stocktalkweekly"].high.shares == 0.20
     assert s.per_channel["mystic"].low.shares == 0.10
+    # watched_channels keys must match the discord extension's channel_id_map values
+    # (single-word handles), otherwise ChannelPolicyGuard silently blocks.
+    assert set(pol.watched_channels.keys()) >= set(cm.values())
     assert s.default.high.shares == 0.10
     assert pol.execution.margin_multiplier == 2.0
     assert pol.execution.options_chase_threshold_pct == 0.10
