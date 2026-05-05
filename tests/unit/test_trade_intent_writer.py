@@ -10,6 +10,20 @@ def _store():
     return s
 
 
+class _FakeIntentStore:
+    """Minimal fake store that records the last inserted row."""
+    def __init__(self):
+        self.last_written: dict | None = None
+
+    async def insert(self, record: dict) -> None:
+        self.last_written = record
+
+
+@pytest.fixture
+def fake_intent_store():
+    return _FakeIntentStore()
+
+
 def _ctx(event_id="evt1", channel="mystic", ticker="NVDA",
          intent="LONG_SIGNAL", bucket="HIGH",
          received_at="2026-04-24T10:00:00+00:00"):
@@ -85,3 +99,38 @@ async def test_unknown_intent_fails_rather_than_silently_defaulting_to_long():
     assert result.status == "fail", f"unknown intent must fail, got {result.status}"
     assert "intent" in (result.reason or "").lower()
     store.insert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_writes_equity_when_ctx_says_equity(fake_intent_store):
+    """When ctx['instrument_type']='equity', the row written has instrument_type='equity'."""
+    writer = TradeIntentWriter(fake_intent_store)
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({
+        "channel": "mystic", "ticker": "AAPL",
+        "side": "long", "bucket": "HIGH",
+        "instrument_type": "equity",
+    })
+    result = await writer.run(ctx)
+    if result.updates:
+        ctx.update(result.updates)
+    row = fake_intent_store.last_written
+    assert row["instrument_type"] == "equity"
+    assert row.get("parent_intent_id") is None
+
+
+@pytest.mark.asyncio
+async def test_writes_option_with_parent_intent_id(fake_intent_store):
+    """When ctx['instrument_type']='option' and parent_intent_id is set, both flow through."""
+    writer = TradeIntentWriter(fake_intent_store)
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({
+        "channel": "mystic", "ticker": "AAPL",
+        "side": "long", "bucket": "HIGH",
+        "instrument_type": "option",
+        "parent_intent_id": "shares-intent-123",
+    })
+    await writer.run(ctx)
+    row = fake_intent_store.last_written
+    assert row["instrument_type"] == "option"
+    assert row["parent_intent_id"] == "shares-intent-123"

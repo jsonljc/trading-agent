@@ -116,13 +116,10 @@ CREATE TABLE IF NOT EXISTS trade_intents (
     policy_state           TEXT NOT NULL,
     execution_mode         TEXT,
     order_type             TEXT,
-    walk_profile           TEXT,
     initial_reference_ask  REAL,
     initial_order_limit    REAL,
-    max_chase_pct          REAL,
     max_chase_price        REAL,
     max_reprices           INTEGER,
-    reprice_interval_ms    INTEGER,
     execution_state        TEXT,
     outbox_status          TEXT,
     broker_order_ref       TEXT,
@@ -138,8 +135,26 @@ CREATE TABLE IF NOT EXISTS trade_intents (
     filled_at              TEXT,
     cancelled_at           TEXT,
     created_at             TEXT NOT NULL,
-    updated_at             TEXT NOT NULL
+    updated_at             TEXT NOT NULL,
+    fill_qty               INTEGER,
+    parent_intent_id       TEXT
 );
+CREATE TABLE IF NOT EXISTS trade_intent_trims (
+    intent_id            TEXT NOT NULL,
+    rung                 INTEGER NOT NULL,
+    threshold_pct        REAL NOT NULL,
+    trim_pct             REAL NOT NULL,
+    armed_at             TEXT NOT NULL,
+    fired_at             TEXT,
+    fire_price           REAL,
+    sold_qty             INTEGER,
+    sold_avg_price       REAL,
+    broker_order_ref     TEXT,
+    PRIMARY KEY (intent_id, rung),
+    FOREIGN KEY (intent_id) REFERENCES trade_intents(intent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_trade_intent_trims_unfired
+    ON trade_intent_trims(intent_id) WHERE fired_at IS NULL;
 CREATE VIEW IF NOT EXISTS dlq_intents AS
     SELECT * FROM trade_intents
     WHERE execution_state = 'failed'

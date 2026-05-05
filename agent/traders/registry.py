@@ -1,5 +1,6 @@
 from __future__ import annotations
-from agent.traders.profile import TraderProfile
+from pathlib import Path
+from agent.traders.profile import TraderProfile, load_all_profiles
 
 
 class TraderRegistry:
@@ -19,3 +20,7 @@ class TraderRegistry:
 
     def all(self) -> list[TraderProfile]:
         return list(self._by_author.values())
+
+    @classmethod
+    def from_dir(cls, directory: str | Path) -> "TraderRegistry":
+        return cls(load_all_profiles(Path(directory)))

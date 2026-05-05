@@ -61,8 +61,8 @@ class AccountSummary:
 class PreparedOrder:
     action: str         # 'BUY'
     quantity: int
-    order_type: str     # 'LMT'
-    limit_price: float
+    order_type: str     # 'LMT' | 'MKT'
+    limit_price: float | None
     tif: str            # 'DAY'
 
 

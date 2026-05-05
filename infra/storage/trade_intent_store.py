@@ -34,6 +34,7 @@ class TradeIntentStore:
         intent_id: str,
         execution_state: str,
         fill_price: float | None = None,
+        fill_qty: int | None = None,
         filled_at: str | None = None,
         cancelled_at: str | None = None,
         cancel_reason: str | None = None,
@@ -46,14 +47,14 @@ class TradeIntentStore:
         order_ack_at: str | None = None,
         initial_reference_ask: float | None = None,
         initial_order_limit: float | None = None,
-        max_chase_pct: float | None = None,
         max_chase_price: float | None = None,
-        walk_profile: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         fields = {"execution_state": execution_state, "updated_at": now}
         if fill_price is not None:
             fields["fill_price"] = fill_price
+        if fill_qty is not None:
+            fields["fill_qty"] = fill_qty
         if filled_at is not None:
             fields["filled_at"] = filled_at
         if cancelled_at is not None:
@@ -78,16 +79,28 @@ class TradeIntentStore:
             fields["initial_reference_ask"] = initial_reference_ask
         if initial_order_limit is not None:
             fields["initial_order_limit"] = initial_order_limit
-        if max_chase_pct is not None:
-            fields["max_chase_pct"] = max_chase_pct
         if max_chase_price is not None:
             fields["max_chase_price"] = max_chase_price
-        if walk_profile is not None:
-            fields["walk_profile"] = walk_profile
         set_clause = ", ".join(f"{k}=:{k}" for k in fields)
         await self._conn.execute(
             f"UPDATE trade_intents SET {set_clause} WHERE intent_id=:_id",
             {**fields, "_id": intent_id},
+        )
+        await self._conn.commit()
+
+    async def update_fill(
+        self,
+        intent_id: str,
+        *,
+        fill_price: float,
+        fill_qty: int,
+        execution_state: str = "filled",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "UPDATE trade_intents SET fill_price=?, fill_qty=?, execution_state=?, "
+            "updated_at=? WHERE intent_id=?",
+            (fill_price, fill_qty, execution_state, now, intent_id),
         )
         await self._conn.commit()
 
@@ -111,3 +124,46 @@ class TradeIntentStore:
             "SELECT * FROM trade_intents WHERE outbox_status IN ('pending', 'dispatched')"
         ) as cur:
             return await cur.fetchall()
+
+    async def write(
+        self,
+        *,
+        intent_id: str,
+        event_id: str,
+        channel: str,
+        ticker: str,
+        side: str,
+        instrument_type: str,
+        parent_intent_id: str | None,
+        expiry: str | None,
+        strike: float | None,
+        right: str | None,
+        conviction: str,
+        fill_price: float | None,
+        fill_qty: int | None,
+        execution_state: str,
+        signal_received_at: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "intent_id": intent_id,
+            "event_id": event_id,
+            "channel": channel,
+            "ticker": ticker,
+            "side": side,
+            "instrument_type": instrument_type,
+            "parent_intent_id": parent_intent_id,
+            "expiry": expiry,
+            "strike": strike,
+            "right": right,
+            "conviction": conviction,
+            "fill_price": fill_price,
+            "fill_qty": fill_qty,
+            "execution_state": execution_state,
+            "policy_state": "approved",
+            "signal_received_at": signal_received_at,
+            "intent_created_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self.insert(record)

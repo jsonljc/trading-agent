@@ -29,9 +29,11 @@ from infra.storage.idempotency_store import IdempotencyStore
 from infra.storage.signal_store import SignalStore
 from infra.storage.execution_store import ExecutionStore
 from infra.storage.classification_log_store import ClassificationLogStore
+from infra.storage.trim_ladder_store import TrimLadderStore
 from infra.llm.classifier_client import AnthropicClassifierClient
 from infra.telegram.client import TelegramClient
 from infra.bridge_client.socket_reader import SocketReader, TriggerEvent
+from agent.exit_ladder import ExitLadder
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 os.makedirs("logs", exist_ok=True)
@@ -85,6 +87,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     from skills.execution.execution_audit_writer import ExecutionAuditWriter
     from skills.execution.execution_reconciler import ExecutionReconciler
 
+    trim_store = TrimLadderStore(conn)
+
     phase1_chain = build_phase1_chain(
         policy, idempotency_store, telegram,
         gateway=gateway,
@@ -92,7 +96,9 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         classification_log_store=classification_log_store,
         llm_classifier=llm_classifier,
     )
-    phase2b_chain = build_phase2b_execution_chain(policy, execution_store, gateway, trade_intent_store)
+    phase2b_chain = build_phase2b_execution_chain(
+        policy, execution_store, gateway, trade_intent_store, trim_store=trim_store
+    )
     full_chain = phase1_chain + phase2b_chain
 
     audit_writer = ExecutionAuditWriter(conn)
@@ -144,12 +150,24 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         interval_seconds=policy.execution.reconciler_interval_seconds,
     )
 
+    exit_ladder = ExitLadder(
+        gateway,
+        trade_intent_store,
+        trim_store,
+        poll_interval_seconds=policy.execution.exit_poll_interval_seconds,
+    )
+
     reader = SocketReader(socket_path)
     logger.info("Trading agent Phase 2b ready. Listening on %s", socket_path)
     try:
         reconciler.start()
+        exit_ladder.start()
         await reader.start(handle_event)
     finally:
+        await exit_ladder.stop()
+        # ExecutionReconciler does not expose a stop() method — clean shutdown
+        # of the reconciler loop is out of scope; it will be cancelled by the
+        # event loop when the process exits.
         await gateway.disconnect()
         await conn.close()
 

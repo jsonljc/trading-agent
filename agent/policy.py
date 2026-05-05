@@ -9,16 +9,10 @@ class TriggerPolicy(BaseModel):
 
 
 class InstrumentPolicy(BaseModel):
-    prefer_options: bool
     min_expiry_days: int
     strike_policy: str
-    fallback_to_stock_if_no_options: bool
-
-
-class PricingPolicy(BaseModel):
-    mode: str
-    option_spread_fraction: float
-    stock_buffer_pct: float
+    # prefer_options removed (dead under shares-first design)
+    # fallback_to_stock_if_no_options removed (dead under shares-first design)
 
 
 class MarketHours(BaseModel):
@@ -79,17 +73,49 @@ class IBGatewayPolicy(BaseModel):
         return v
 
 
+class SizingTier(BaseModel):
+    shares: float = Field(ge=0.0, le=1.0)
+    options: float = Field(ge=0.0, le=1.0)
+
+
+class SizingBuckets(BaseModel):
+    high: SizingTier
+    low: SizingTier
+
+
+class SizingPolicy(BaseModel):
+    default: SizingBuckets
+    per_channel: dict[str, SizingBuckets] = Field(default_factory=dict)
+
+
+class TrimRung(BaseModel):
+    threshold_pct: float = Field(ge=0.0, le=1.0)
+    trim_pct: float = Field(ge=0.0, le=1.0)
+
+
+class TrimLadderConfig(BaseModel):
+    rungs: list[TrimRung]
+
+
 class ExecutionPolicy(BaseModel):
     fill_wait_timeout_seconds: float = 30.0
     max_equity_price: float = 500.0
     reconciler_interval_seconds: int = 60
-    walk_profile: str = "aggressive_fast"
-    walk_profiles: dict[str, list[float]] = {
-        "cautious_fast":   [0.00, 0.02, 0.05, 0.10],
-        "aggressive_fast": [0.01, 0.03, 0.06, 0.10],
-    }
-    reprice_interval_ms: int = 2500
-    max_chase_pct: float = 0.15
+    # walk_profile, walk_profiles, reprice_interval_ms, max_chase_pct removed
+    # (dead — PriceWalker bypassed by MKT chain)
+    margin_multiplier: float = 2.0
+    options_chase_threshold_pct: float = 0.10
+    exit_poll_interval_seconds: int = 2
+    trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
+        TrimRung(threshold_pct=0.05, trim_pct=0.40),
+        TrimRung(threshold_pct=0.10, trim_pct=0.40),
+    ])
+    sizing: SizingPolicy = SizingPolicy(
+        default=SizingBuckets(
+            high=SizingTier(shares=0.10, options=0.05),
+            low=SizingTier(shares=0.05, options=0.05),
+        ),
+    )
 
 
 class DiscordExtensionConfig(BaseModel):
@@ -100,7 +126,7 @@ class DiscordExtensionConfig(BaseModel):
 class PolicyModel(BaseModel):
     trigger: TriggerPolicy
     instrument_policy: InstrumentPolicy
-    pricing_policy: PricingPolicy
+    # pricing_policy removed (dead — only consumed by OrderPricer, which is removed)
     market_hours: MarketHours
     cooldown_policy: CooldownPolicy
     dedupe_policy: DedupePolicy

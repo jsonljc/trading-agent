@@ -139,7 +139,9 @@ async def test_logger_records_llm_error_action():
 
 
 @pytest.mark.asyncio
-async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
+async def test_logger_records_fired_for_low_bucket_without_size_pct():
+    """After classifier rework, size_pct is no longer set for HIGH/LOW signals.
+    The logger must use bucket alone (not size_pct) to determine action_taken."""
     async with aiosqlite.connect(":memory:") as conn:
         conn.row_factory = aiosqlite.Row
         await conn.executescript(SCHEMA)
@@ -152,7 +154,7 @@ async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
             "full_message_text": "msg",
             "bucket": "LOW",
             "confidence": 0.9,
-            "size_pct": 0.0,
+            # size_pct intentionally absent — this is the new normal post-Task 6
             "size_source": "shortcut_stated",
             "classifier_features_json": "{}",
             "classifier_llm_response_json": None,
@@ -160,4 +162,4 @@ async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
         })
         await logger.run(ctx)
         rows = await store.recent_for_trader("wse")
-        assert rows[0]["action_taken"] == "skipped"
+        assert rows[0]["action_taken"] == "fired"
