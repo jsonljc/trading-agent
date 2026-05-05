@@ -5,7 +5,6 @@ instrument_policy:
   prefer_options: true
   min_expiry_days: 180
   strike_policy: closest_itm_call
-  fallback_to_stock_if_no_options: true
 
 pricing_policy:
   mode: cheapest_fillable_limit
@@ -88,15 +87,32 @@ execution:
     aggressive_fast: [0.01, 0.03, 0.06, 0.10]
   reprice_interval_ms: 2500
   max_chase_pct: 0.15
+  margin_multiplier: 2.0
+  options_chase_threshold_pct: 0.10
+  exit_poll_interval_seconds: 2
+  trim_ladder:
+    rungs:
+      - threshold_pct: 0.05
+        trim_pct: 0.40
+      - threshold_pct: 0.10
+        trim_pct: 0.40
+  sizing:
+    default:
+      high: { shares: 0.10, options: 0.05 }
+      low:  { shares: 0.05, options: 0.05 }
+    per_channel:
+      stock-talk-portfolio:
+        high: { shares: 0.20, options: 0.05 }
+        low:  { shares: 0.15, options: 0.05 }
+      mystic:
+        high: { shares: 0.15, options: 0.05 }
+        low:  { shares: 0.10, options: 0.05 }
 
 discord_extension:
   forwarder_port: 9876
   channel_id_map:
-    # Replace with real Discord channel IDs (right-click channel → Copy ID
-    # in Discord with Developer Mode enabled).
-    # Every entry in `watched_channels` that maps to a trader profile in
-    # config/traders/ must have at least one ID listed here, or messages
-    # from that channel will never reach the agent.
-    "1229546005788098580": mystic
-    "1248378121451733083": wall-st-engine
-    "1217309136681832540": stock-talk-portfolio
+    "1229546005788098580": stocktalkweekly
+    "1217309136681832540": mystic
+    "1248378121451733083": wallstengine
+    "1221605346305642558": pup-danny
+    "1151611275709788253": urkel
