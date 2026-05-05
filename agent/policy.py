@@ -12,7 +12,7 @@ class InstrumentPolicy(BaseModel):
     prefer_options: bool
     min_expiry_days: int
     strike_policy: str
-    fallback_to_stock_if_no_options: bool
+    # fallback_to_stock_if_no_options removed (dead under shares-first design)
 
 
 class PricingPolicy(BaseModel):
@@ -79,6 +79,30 @@ class IBGatewayPolicy(BaseModel):
         return v
 
 
+class SizingTier(BaseModel):
+    shares: float = Field(ge=0.0, le=1.0)
+    options: float = Field(ge=0.0, le=1.0)
+
+
+class SizingBuckets(BaseModel):
+    high: SizingTier
+    low: SizingTier
+
+
+class SizingPolicy(BaseModel):
+    default: SizingBuckets
+    per_channel: dict[str, SizingBuckets] = Field(default_factory=dict)
+
+
+class TrimRung(BaseModel):
+    threshold_pct: float = Field(ge=0.0, le=1.0)
+    trim_pct: float = Field(ge=0.0, le=1.0)
+
+
+class TrimLadderConfig(BaseModel):
+    rungs: list[TrimRung]
+
+
 class ExecutionPolicy(BaseModel):
     fill_wait_timeout_seconds: float = 30.0
     max_equity_price: float = 500.0
@@ -90,6 +114,19 @@ class ExecutionPolicy(BaseModel):
     }
     reprice_interval_ms: int = 2500
     max_chase_pct: float = 0.15
+    margin_multiplier: float = 2.0
+    options_chase_threshold_pct: float = 0.10
+    exit_poll_interval_seconds: int = 2
+    trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
+        TrimRung(threshold_pct=0.05, trim_pct=0.40),
+        TrimRung(threshold_pct=0.10, trim_pct=0.40),
+    ])
+    sizing: SizingPolicy = SizingPolicy(
+        default=SizingBuckets(
+            high=SizingTier(shares=0.10, options=0.05),
+            low=SizingTier(shares=0.05, options=0.05),
+        ),
+    )
 
 
 class DiscordExtensionConfig(BaseModel):

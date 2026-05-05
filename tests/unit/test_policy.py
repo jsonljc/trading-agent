@@ -11,7 +11,6 @@ instrument_policy:
   prefer_options: true
   min_expiry_days: 180
   strike_policy: closest_itm_call
-  fallback_to_stock_if_no_options: true
 pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
@@ -64,7 +63,6 @@ instrument_policy:
   prefer_options: true
   min_expiry_days: 180
   strike_policy: closest_itm_call
-  fallback_to_stock_if_no_options: true
 pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
@@ -117,7 +115,6 @@ instrument_policy:
   prefer_options: true
   min_expiry_days: 180
   strike_policy: closest_itm_call
-  fallback_to_stock_if_no_options: true
 pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
@@ -167,7 +164,6 @@ instrument_policy:
   prefer_options: true
   min_expiry_days: 180
   strike_policy: closest_itm_call
-  fallback_to_stock_if_no_options: true
 pricing_policy:
   mode: cheapest_fillable_limit
   option_spread_fraction: 0.25
