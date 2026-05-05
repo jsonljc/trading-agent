@@ -285,6 +285,29 @@ class IBGateway:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"get_account_summary failed: {exc}") from exc
 
+    async def qualify_equity(self, ticker: str) -> BrokerContractRef:
+        self._read_breaker.check()
+        try:
+            from ib_insync import Stock
+            stock = Stock(ticker, "SMART", "USD")
+            qualified = await self._ib.qualifyContractsAsync(stock)
+            if not qualified:
+                raise IBGatewayUnavailable(f"could not qualify equity {ticker}")
+            q = qualified[0]
+            ref = BrokerContractRef(
+                symbol=q.symbol, sec_type="STK",
+                exchange=q.exchange or "SMART",
+                currency=q.currency or "USD",
+                con_id=q.conId, qualified=True,
+            )
+            self._read_breaker._record_success()
+            return ref
+        except IBGatewayUnavailable:
+            raise
+        except Exception as exc:
+            self._read_breaker._record_failure()
+            raise IBGatewayUnavailable(f"qualify_equity failed: {exc}") from exc
+
     async def get_quote(self, ticker: str) -> float:
         self._read_breaker.check()
         try:
