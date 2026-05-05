@@ -6,11 +6,9 @@ def _base_policy_dict() -> dict:
     return {
         "trigger": {"action_words": ["long"]},
         "instrument_policy": {
-            "prefer_options": True, "min_expiry_days": 180,
+            "min_expiry_days": 180,
             "strike_policy": "closest_itm_call",
         },
-        "pricing_policy": {"mode": "cheapest_fillable_limit",
-                           "option_spread_fraction": 0.25, "stock_buffer_pct": 0.001},
         "market_hours": {"options_rth_only": True, "stock_premarket_allowed": True,
                          "stock_premarket_start": "04:00", "rth_start": "09:30",
                          "rth_end": "16:00", "stock_afterhours_queue": True},

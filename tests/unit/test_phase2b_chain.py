@@ -11,13 +11,8 @@ def _build_test_policy() -> PolicyModel:
 trigger:
   action_words: ["long"]
 instrument_policy:
-  prefer_options: true
   min_expiry_days: 180
   strike_policy: closest_itm_call
-pricing_policy:
-  mode: cheapest_fillable_limit
-  option_spread_fraction: 0.25
-  stock_buffer_pct: 0.001
 market_hours:
   options_rth_only: true
   stock_premarket_allowed: true

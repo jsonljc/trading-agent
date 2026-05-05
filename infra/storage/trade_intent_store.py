@@ -47,9 +47,7 @@ class TradeIntentStore:
         order_ack_at: str | None = None,
         initial_reference_ask: float | None = None,
         initial_order_limit: float | None = None,
-        max_chase_pct: float | None = None,
         max_chase_price: float | None = None,
-        walk_profile: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         fields = {"execution_state": execution_state, "updated_at": now}
@@ -81,12 +79,8 @@ class TradeIntentStore:
             fields["initial_reference_ask"] = initial_reference_ask
         if initial_order_limit is not None:
             fields["initial_order_limit"] = initial_order_limit
-        if max_chase_pct is not None:
-            fields["max_chase_pct"] = max_chase_pct
         if max_chase_price is not None:
             fields["max_chase_price"] = max_chase_price
-        if walk_profile is not None:
-            fields["walk_profile"] = walk_profile
         set_clause = ", ".join(f"{k}=:{k}" for k in fields)
         await self._conn.execute(
             f"UPDATE trade_intents SET {set_clause} WHERE intent_id=:_id",
