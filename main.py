@@ -165,6 +165,9 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         await reader.start(handle_event)
     finally:
         await exit_ladder.stop()
+        # ExecutionReconciler does not expose a stop() method — clean shutdown
+        # of the reconciler loop is out of scope; it will be cancelled by the
+        # event loop when the process exits.
         await gateway.disconnect()
         await conn.close()
 
