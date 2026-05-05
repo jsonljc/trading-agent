@@ -34,6 +34,7 @@ class TradeIntentStore:
         intent_id: str,
         execution_state: str,
         fill_price: float | None = None,
+        fill_qty: int | None = None,
         filled_at: str | None = None,
         cancelled_at: str | None = None,
         cancel_reason: str | None = None,
@@ -54,6 +55,8 @@ class TradeIntentStore:
         fields = {"execution_state": execution_state, "updated_at": now}
         if fill_price is not None:
             fields["fill_price"] = fill_price
+        if fill_qty is not None:
+            fields["fill_qty"] = fill_qty
         if filled_at is not None:
             fields["filled_at"] = filled_at
         if cancelled_at is not None:
@@ -88,6 +91,22 @@ class TradeIntentStore:
         await self._conn.execute(
             f"UPDATE trade_intents SET {set_clause} WHERE intent_id=:_id",
             {**fields, "_id": intent_id},
+        )
+        await self._conn.commit()
+
+    async def update_fill(
+        self,
+        intent_id: str,
+        *,
+        fill_price: float,
+        fill_qty: int,
+        execution_state: str = "filled",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "UPDATE trade_intents SET fill_price=?, fill_qty=?, execution_state=?, "
+            "updated_at=? WHERE intent_id=?",
+            (fill_price, fill_qty, execution_state, now, intent_id),
         )
         await self._conn.commit()
 
