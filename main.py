@@ -87,6 +87,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     from skills.execution.execution_audit_writer import ExecutionAuditWriter
     from skills.execution.execution_reconciler import ExecutionReconciler
 
+    trim_store = TrimLadderStore(conn)
+
     phase1_chain = build_phase1_chain(
         policy, idempotency_store, telegram,
         gateway=gateway,
@@ -94,7 +96,9 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         classification_log_store=classification_log_store,
         llm_classifier=llm_classifier,
     )
-    phase2b_chain = build_phase2b_execution_chain(policy, execution_store, gateway, trade_intent_store)
+    phase2b_chain = build_phase2b_execution_chain(
+        policy, execution_store, gateway, trade_intent_store, trim_store=trim_store
+    )
     full_chain = phase1_chain + phase2b_chain
 
     audit_writer = ExecutionAuditWriter(conn)
@@ -146,7 +150,6 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         interval_seconds=policy.execution.reconciler_interval_seconds,
     )
 
-    trim_store = TrimLadderStore(conn)
     exit_ladder = ExitLadder(
         gateway,
         trade_intent_store,
