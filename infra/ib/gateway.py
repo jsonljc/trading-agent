@@ -333,20 +333,31 @@ class IBGateway:
         self._write_breaker.check()
         if not contract_ref.qualified:
             raise ValueError("contract_ref must be qualified before place_order")
+        if order.order_type == "LMT" and order.limit_price is None:
+            raise ValueError("LMT order requires limit_price; got None")
         try:
-            from ib_insync import LimitOrder
+            from ib_insync import LimitOrder, MarketOrder
             ib_contract = _to_ib_contract(contract_ref)
-            ib_order = LimitOrder(
-                action=order.action,
-                totalQuantity=order.quantity,
-                lmtPrice=order.limit_price,
-                tif=order.tif,
-                orderRef=client_order_id,
-            )
+            if order.order_type == "MKT":
+                ib_order = MarketOrder(
+                    action=order.action,
+                    totalQuantity=order.quantity,
+                    tif=order.tif,
+                    orderRef=client_order_id,
+                )
+            else:
+                ib_order = LimitOrder(
+                    action=order.action,
+                    totalQuantity=order.quantity,
+                    lmtPrice=order.limit_price,
+                    tif=order.tif,
+                    orderRef=client_order_id,
+                )
             trade = self._ib.placeOrder(ib_contract, ib_order)
             self._write_breaker._record_success()
-            logger.info("Placed order %s: %s x%s @ %s",
-                        client_order_id, contract_ref.symbol, order.quantity, order.limit_price)
+            logger.info("Placed %s %s: %s x%s",
+                        order.order_type, client_order_id,
+                        contract_ref.symbol, order.quantity)
             return trade
         except IBGatewayUnavailable:
             raise
