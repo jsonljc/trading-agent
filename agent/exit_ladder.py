@@ -4,8 +4,11 @@ import logging
 import math
 from collections import defaultdict
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from infra.ib.models import PreparedOrder, FillStatus
 from infra.ib.gateway import IBGatewayUnavailable
+
+EASTERN = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,12 @@ async def fire_rung_if_crossed(
     return True
 
 
+def _in_rth(now_eastern: datetime) -> bool:
+    """Return True if now_eastern falls within Regular Trading Hours (9:30–16:00 ET)."""
+    h, m = now_eastern.hour, now_eastern.minute
+    return (h == 9 and m >= 30) or (10 <= h < 16)
+
+
 class ExitLadder:
     def __init__(self, gateway, intent_store, trim_store, *,
                  poll_interval_seconds: int):
@@ -80,10 +89,7 @@ class ExitLadder:
 
     async def _tick(self) -> None:
         # Only fire during RTH
-        now = datetime.now()
-        h, m = now.hour, now.minute
-        in_rth = (h == 9 and m >= 30) or (10 <= h < 16)
-        if not in_rth:
+        if not _in_rth(datetime.now(EASTERN)):
             return
 
         unfired = await self._trims.all_unfired()
