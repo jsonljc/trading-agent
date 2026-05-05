@@ -14,10 +14,7 @@ logger = logging.getLogger(__name__)
 
 HIGH_CONF_THRESHOLD = 0.80
 DROP_CONF_THRESHOLD = 0.50
-SIZE_LOW = 0.05
-SIZE_HIGH = 0.10
-MAX_STATED_SIZE = 0.10  # cap at 10%
-SIZE_HIGH_SHORTCUT_THRESHOLD = 0.075  # bucket=HIGH in shortcut path when size_pct >= this
+SMALL_SIZE_THRESHOLD = 7.5  # stated_size_pct < this → force LOW
 
 _SYSTEM_PREAMBLE = """You classify Discord trading messages from a single trader into one of three buckets: HIGH, LOW, SKIP.
 
@@ -71,15 +68,12 @@ class TraderClassifier(Skill):
             and features.entry_verb_present
             and len(features.tickers_in_msg) == 1
         ):
-            size_pct = min(features.stated_size_pct / 100.0, MAX_STATED_SIZE)
-            # >=7.5% → HIGH bookkeeping; this is informational only since size_pct already won.
-            bucket = "HIGH" if size_pct >= SIZE_HIGH_SHORTCUT_THRESHOLD else "LOW"
+            bucket = "HIGH" if features.stated_size_pct >= SMALL_SIZE_THRESHOLD else "LOW"
             updates = {
                 "ticker": features.tickers_in_msg[0],
                 "side": "long",
                 "bucket": bucket,
                 "confidence": 1.0,
-                "size_pct": size_pct,
                 "size_source": "shortcut_stated",
                 "classifier_features_json": json.dumps(dataclasses.asdict(features)),
                 "classifier_llm_response_json": None,
@@ -150,8 +144,12 @@ class TraderClassifier(Skill):
                                reason=f"ticker_not_in_msg:{ticker_upper}")
 
         if confidence < DROP_CONF_THRESHOLD:
+            # bucket="SKIP" so EntrySkipGate halts the pipeline. Without this,
+            # a low-confidence HIGH/LOW from the LLM would propagate through
+            # EntrySkipGate (which only halts on SKIP/None) and execute at
+            # full per-channel sizing.
             updates = {
-                "bucket": bucket, "confidence": confidence,
+                "bucket": "SKIP", "confidence": confidence,
                 "size_pct": 0.0, "size_source": "drop_low_conf",
                 "classifier_features_json": features_json,
                 "classifier_llm_response_json": llm_json,
@@ -163,17 +161,22 @@ class TraderClassifier(Skill):
 
         if confidence < HIGH_CONF_THRESHOLD:
             final_bucket = "LOW"
-            size_pct = SIZE_LOW
             size_source = "downgrade"
         else:
             final_bucket = bucket
-            size_pct = SIZE_HIGH if bucket == "HIGH" else SIZE_LOW
             size_source = "bucket_high" if bucket == "HIGH" else "bucket_low"
+
+        # WSE-fix: explicit small stated size always wins over LLM thesis read
+        if (features.stated_size_pct is not None
+                and features.stated_size_pct < SMALL_SIZE_THRESHOLD
+                and final_bucket == "HIGH"):
+            final_bucket = "LOW"
+            size_source = "wse_small_size_override"
 
         updates = {
             "ticker": ticker, "side": side,
             "bucket": final_bucket, "confidence": confidence,
-            "size_pct": size_pct, "size_source": size_source,
+            "size_source": size_source,
             "classifier_features_json": features_json,
             "classifier_llm_response_json": llm_json,
             "classifier_reason": reason,

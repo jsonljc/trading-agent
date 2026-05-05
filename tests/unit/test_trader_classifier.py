@@ -49,7 +49,7 @@ async def test_shortcut_path_uses_stated_size_no_llm_call():
     result = await classifier.run(ctx)
 
     assert result.status == "success"
-    assert ctx.get("size_pct") == 0.02
+    assert ctx.get("size_pct") in (None, 0.0)  # classifier no longer sets size_pct
     assert ctx.get("size_source") == "shortcut_stated"
     assert ctx.get("ticker") == "AUDC"
     assert ctx.get("bucket") == "LOW"
@@ -72,7 +72,7 @@ async def test_llm_path_high_confidence_high_bucket_fires_at_10pct():
 
     assert result.status == "success"
     assert ctx.get("bucket") == "HIGH"
-    assert ctx.get("size_pct") == 0.10
+    assert ctx.get("size_pct") is None  # classifier no longer sets size_pct
     assert ctx.get("size_source") == "bucket_high"
 
 
@@ -90,7 +90,7 @@ async def test_llm_path_mid_confidence_downgrades_to_low_5pct():
 
     result = await classifier.run(ctx)
     assert ctx.get("bucket") == "LOW"
-    assert ctx.get("size_pct") == 0.05
+    assert ctx.get("size_pct") is None  # classifier no longer sets size_pct
     assert ctx.get("size_source") == "downgrade"
 
 
@@ -110,6 +110,11 @@ async def test_llm_path_low_confidence_drops():
     assert result.status == "success"
     assert "low_confidence" in (result.reason or "")
     assert ctx.get("size_pct") == 0.0
+    # Regression: bucket MUST be "SKIP" so EntrySkipGate halts the pipeline.
+    # If bucket leaks through as LLM's HIGH/LOW value, low-confidence signals
+    # would execute at full per-channel sizing.
+    assert ctx.get("bucket") == "SKIP"
+    assert ctx.get("size_source") == "drop_low_conf"
 
 
 @pytest.mark.asyncio
@@ -142,7 +147,7 @@ async def test_stated_size_capped_at_10pct():
     })
 
     result = await classifier.run(ctx)
-    assert ctx.get("size_pct") == 0.10
+    assert ctx.get("size_pct") in (None, 0.0)  # classifier no longer sets size_pct
     assert ctx.get("size_source") == "shortcut_stated"
     assert ctx.get("ticker") == "XX"
 
@@ -161,7 +166,7 @@ async def test_shortcut_threshold_at_7_5_pct_buckets_high():
 
     result = await classifier.run(ctx)
     assert result.status == "success"
-    assert ctx.get("size_pct") == 0.075
+    assert ctx.get("size_pct") in (None, 0.0)  # classifier no longer sets size_pct
     assert ctx.get("bucket") == "HIGH"
     assert ctx.get("size_source") == "shortcut_stated"
 

@@ -1,0 +1,12 @@
+handle: urkel
+display_name: Urkel
+discord_author_pattern: "Urkel"
+alert_mention: ""
+require_alert_mention: false
+bot_authors_to_skip: []
+auto_execute: true
+size_in_message: false
+prefer_message_size: false
+classifier_model: claude-haiku-4-5
+availability_phrases: []
+conviction_examples: []

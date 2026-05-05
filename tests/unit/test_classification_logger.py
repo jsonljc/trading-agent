@@ -86,30 +86,6 @@ async def test_logger_records_fired_action_for_autonomous():
         assert rows[0]["action_taken"] == "fired"
 
 
-@pytest.mark.asyncio
-async def test_logger_records_bootstrap_review_for_non_autonomous():
-    async with aiosqlite.connect(":memory:") as conn:
-        conn.row_factory = aiosqlite.Row
-        await conn.executescript(SCHEMA)
-        await conn.commit()
-
-        store = ClassificationLogStore(conn)
-        logger = ClassificationLogger(store)
-        ctx = Context(trace_id="t", event_id="e", data={
-            "trader_handle": "mystic",
-            "trader_auto_execute": False,
-            "full_message_text": "swing trade INDI",
-            "bucket": "LOW",
-            "confidence": 0.85,
-            "size_pct": 0.05,
-            "size_source": "bucket_low",
-            "classifier_features_json": "{}",
-            "classifier_llm_response_json": None,
-            "classifier_reason": "swing trade self-label",
-        })
-        await logger.run(ctx)
-        rows = await store.recent_for_trader("mystic")
-        assert rows[0]["action_taken"] == "bootstrap_review"
 
 
 @pytest.mark.asyncio
@@ -139,7 +115,9 @@ async def test_logger_records_llm_error_action():
 
 
 @pytest.mark.asyncio
-async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
+async def test_logger_records_fired_for_low_bucket_without_size_pct():
+    """After classifier rework, size_pct is no longer set for HIGH/LOW signals.
+    The logger must use bucket alone (not size_pct) to determine action_taken."""
     async with aiosqlite.connect(":memory:") as conn:
         conn.row_factory = aiosqlite.Row
         await conn.executescript(SCHEMA)
@@ -152,7 +130,7 @@ async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
             "full_message_text": "msg",
             "bucket": "LOW",
             "confidence": 0.9,
-            "size_pct": 0.0,
+            # size_pct intentionally absent — this is the new normal post-Task 6
             "size_source": "shortcut_stated",
             "classifier_features_json": "{}",
             "classifier_llm_response_json": None,
@@ -160,4 +138,4 @@ async def test_logger_records_skipped_when_size_pct_zero_even_if_bucket_low():
         })
         await logger.run(ctx)
         rows = await store.recent_for_trader("wse")
-        assert rows[0]["action_taken"] == "skipped"
+        assert rows[0]["action_taken"] == "fired"

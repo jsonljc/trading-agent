@@ -4,6 +4,7 @@ import logging
 from agent.context import Context, SkillResult
 from agent.skill import Skill
 from infra.ib.gateway import IBGatewayUnavailable
+from skills.execution._options_leg import already_terminated, partial_or
 
 logger = logging.getLogger(__name__)
 
@@ -11,50 +12,63 @@ logger = logging.getLogger(__name__)
 class OrderSizer(Skill):
     name = "OrderSizer"
 
-    def __init__(self, gateway) -> None:
+    def __init__(self, gateway, *, margin_multiplier: float = 2.0) -> None:
         self._gateway = gateway
+        self._margin_multiplier = margin_multiplier
 
     async def run(self, ctx: Context) -> SkillResult:
-        size_pct = ctx.get("size_pct")
+        if (r := already_terminated(ctx)):
+            return r
+        instrument_type = ctx.get("instrument_type", "option")
+        size_pct = (ctx.get("shares_pct") if instrument_type == "equity"
+                    else ctx.get("options_pct"))
         if size_pct is None or size_pct <= 0:
-            return SkillResult(status="fail", reason="order_sizer: size_pct missing or <= 0 in context")
+            return partial_or(ctx,
+                              f"order_sizer: pct missing for {instrument_type}", "fail")
 
         try:
             account = await self._gateway.get_account_summary()
         except IBGatewayUnavailable as exc:
-            return SkillResult(status="fail", reason=f"broker_unavailable: {exc}")
+            return partial_or(ctx, f"broker_unavailable: {exc}", "fail")
 
-        instrument_type = ctx.get("instrument_type", "option")
-        allocation = account.buying_power * size_pct
+        sizing_base = account.net_liquidation * self._margin_multiplier
+        allocation = sizing_base * size_pct
 
         if instrument_type == "option":
             candidates = ctx.get("option_candidates", [])
             selected_strike = ctx.get("selected_strike")
             matching = [c for c in candidates if c.strike == selected_strike]
             if not matching:
-                return SkillResult(status="fail", reason="order_sizer: no matching candidate for selected strike")
-            candidate = matching[0]
-            ask = candidate.ask
-            multiplier = candidate.multiplier
-            cost_per_contract = ask * multiplier
+                # Invariant violation: ContractSelector picked a strike not in
+                # the candidate set. Hard-fail rather than swallow as partial.
+                logger.error(
+                    "OrderSizer: selected_strike=%s missing from %d candidates "
+                    "— ContractSelector / ChainLookup desync",
+                    selected_strike, len(candidates),
+                )
+                return SkillResult(status="fail",
+                                   reason="order_sizer: no matching option candidate")
+            cand = matching[0]
+            cost_per_contract = cand.ask * cand.multiplier
             quantity = math.floor(allocation / cost_per_contract)
             notional = quantity * cost_per_contract
+            ask = cand.ask
         else:
             ticker = ctx.get("ticker")
             try:
                 ask = await self._gateway.get_quote(ticker)
             except IBGatewayUnavailable as exc:
-                return SkillResult(status="fail", reason=f"broker_unavailable: {exc}")
+                return partial_or(ctx, f"broker_unavailable: {exc}", "fail")
             quantity = math.floor(allocation / ask)
             notional = quantity * ask
 
         if quantity < 1:
-            return SkillResult(
-                status="fail",
-                reason=f"insufficient_buying_power: allocation={allocation:.2f} insufficient for 1 unit at {ask}",
-            )
+            return partial_or(ctx,
+                              f"insufficient_buying_power: alloc={allocation:.2f} < 1 unit at {ask}",
+                              "fail")
 
-        reason = f"size_pct={size_pct:.2f} of ${account.buying_power:,.0f} buying_power"
+        reason = (f"{instrument_type} pct={size_pct:.4f} of "
+                  f"NetLiq=${account.net_liquidation:,.0f} × {self._margin_multiplier}")
         logger.info("OrderSizer: qty=%d notional=%.2f (%s)", quantity, notional, reason)
         return SkillResult(status="success", updates={
             "quantity": quantity,

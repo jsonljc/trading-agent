@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from agent.context import Context, SkillResult
 from agent.skill import Skill
 from infra.ib.gateway import IBGatewayUnavailable
+from skills.execution._options_leg import already_terminated, partial_or
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +19,14 @@ class ChainLookup(Skill):
         self._conn = conn
 
     async def run(self, ctx: Context) -> SkillResult:
+        if (r := already_terminated(ctx)):
+            return r
         ticker = ctx.get("ticker")
         signal_id = ctx.get("signal_id", ctx.event_id)
         try:
             candidates = await self._gateway.get_chain(ticker)
         except IBGatewayUnavailable as exc:
-            return SkillResult(status="fail", reason=f"broker_unavailable: {exc}")
+            return partial_or(ctx, f"broker_unavailable: {exc}", "fail")
 
         now = datetime.now(timezone.utc).isoformat()
         for c in candidates:

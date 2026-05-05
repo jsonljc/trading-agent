@@ -53,8 +53,6 @@ class ClassificationLogger(Skill):
             return "llm_error"
         if size_source == "ticker_not_in_msg":
             return "ticker_not_in_msg"
-        if bucket == "SKIP" or float(ctx.get("size_pct", 0.0)) <= 0:
+        if bucket in (None, "SKIP"):
             return "skipped"
-        if not ctx.get("trader_auto_execute", False):
-            return "bootstrap_review"
         return "fired"

@@ -46,7 +46,6 @@ async def test_phase1_high_bucket_signal(db):
     rows = await log_store.recent_for_trader("mystic")
     assert len(rows) == 1
     assert rows[0]["bucket"] == "HIGH"
-    assert rows[0]["size_pct"] == 0.10
 
 
 @pytest.mark.asyncio
@@ -75,7 +74,6 @@ async def test_phase1_low_bucket_signal(db):
     rows = await log_store.recent_for_trader("wallstengine")
     assert len(rows) == 1
     assert rows[0]["bucket"] == "LOW"
-    assert rows[0]["size_pct"] == 0.05
 
 
 @pytest.mark.asyncio

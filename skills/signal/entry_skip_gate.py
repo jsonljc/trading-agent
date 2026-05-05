@@ -14,7 +14,6 @@ class EntrySkipGate(Skill):
 
     async def run(self, ctx: Context) -> SkillResult:
         bucket = ctx.get("bucket")
-        size_pct = ctx.get("size_pct", 0.0)
-        if bucket in (None, "SKIP") or size_pct <= 0:
+        if bucket in (None, "SKIP"):
             return SkillResult(status="skip", reason=f"no_entry:bucket={bucket}")
         return SkillResult(status="success")

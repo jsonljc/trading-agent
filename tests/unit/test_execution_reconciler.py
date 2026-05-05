@@ -20,11 +20,11 @@ async def test_reconcile_scans_pending_outbox():
     row = MagicMock()
     row.__getitem__ = lambda self, key: "evt1:NVDA:long" if key == "intent_id" else "pending"
     reconciler = _reconciler(pending_rows=[row])
-    await reconciler._reconcile()
+    await reconciler._reconcile_intents()
     reconciler._intent_store.get_pending_outbox.assert_called_once()
 
 
 async def test_reconcile_no_pending_no_error():
     reconciler = _reconciler()
-    await reconciler._reconcile()
+    await reconciler._reconcile_intents()
     reconciler._intent_store.get_pending_outbox.assert_called_once()

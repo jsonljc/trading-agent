@@ -285,6 +285,29 @@ class IBGateway:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"get_account_summary failed: {exc}") from exc
 
+    async def qualify_equity(self, ticker: str) -> BrokerContractRef:
+        self._read_breaker.check()
+        try:
+            from ib_insync import Stock
+            stock = Stock(ticker, "SMART", "USD")
+            qualified = await self._ib.qualifyContractsAsync(stock)
+            if not qualified:
+                raise IBGatewayUnavailable(f"could not qualify equity {ticker}")
+            q = qualified[0]
+            ref = BrokerContractRef(
+                symbol=q.symbol, sec_type="STK",
+                exchange=q.exchange or "SMART",
+                currency=q.currency or "USD",
+                con_id=q.conId, qualified=True,
+            )
+            self._read_breaker._record_success()
+            return ref
+        except IBGatewayUnavailable:
+            raise
+        except Exception as exc:
+            self._read_breaker._record_failure()
+            raise IBGatewayUnavailable(f"qualify_equity failed: {exc}") from exc
+
     async def get_quote(self, ticker: str) -> float:
         self._read_breaker.check()
         try:
@@ -333,20 +356,31 @@ class IBGateway:
         self._write_breaker.check()
         if not contract_ref.qualified:
             raise ValueError("contract_ref must be qualified before place_order")
+        if order.order_type == "LMT" and order.limit_price is None:
+            raise ValueError("LMT order requires limit_price; got None")
         try:
-            from ib_insync import LimitOrder
+            from ib_insync import LimitOrder, MarketOrder
             ib_contract = _to_ib_contract(contract_ref)
-            ib_order = LimitOrder(
-                action=order.action,
-                totalQuantity=order.quantity,
-                lmtPrice=order.limit_price,
-                tif=order.tif,
-                orderRef=client_order_id,
-            )
+            if order.order_type == "MKT":
+                ib_order = MarketOrder(
+                    action=order.action,
+                    totalQuantity=order.quantity,
+                    tif=order.tif,
+                    orderRef=client_order_id,
+                )
+            else:
+                ib_order = LimitOrder(
+                    action=order.action,
+                    totalQuantity=order.quantity,
+                    lmtPrice=order.limit_price,
+                    tif=order.tif,
+                    orderRef=client_order_id,
+                )
             trade = self._ib.placeOrder(ib_contract, ib_order)
             self._write_breaker._record_success()
-            logger.info("Placed order %s: %s x%s @ %s",
-                        client_order_id, contract_ref.symbol, order.quantity, order.limit_price)
+            logger.info("Placed %s %s: %s x%s",
+                        order.order_type, client_order_id,
+                        contract_ref.symbol, order.quantity)
             return trade
         except IBGatewayUnavailable:
             raise
