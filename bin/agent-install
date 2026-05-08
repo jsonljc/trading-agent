@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install (or reinstall) the trading-agent and trading-bridge LaunchAgents.
+# Install (or reinstall) the trading-agent LaunchAgents.
 # Idempotent: safe to re-run after editing plists.
 set -euo pipefail
 
@@ -7,7 +7,7 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$TARGET_DIR" "$REPO_DIR/logs"
 
-for label in com.jasonli.trading-agent com.jasonli.trading-bridge com.jasonli.trading-watchdog com.jasonli.trading-extension-forwarder; do
+for label in com.jasonli.trading-agent com.jasonli.trading-watchdog com.jasonli.trading-extension-forwarder; do
     src="$REPO_DIR/infra/launchd/${label}.plist"
     dst="$TARGET_DIR/${label}.plist"
     if launchctl list "$label" >/dev/null 2>&1; then
@@ -19,4 +19,4 @@ for label in com.jasonli.trading-agent com.jasonli.trading-bridge com.jasonli.tr
 done
 
 echo
-echo "Both agents loaded (RunAtLoad=false). Use bin/agent-start to launch."
+echo "Agents loaded (RunAtLoad=false). Use bin/agent-start to launch."

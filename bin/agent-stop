@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Stop the trading agent and bridge. Does not unload the launchd jobs;
-# use bin/agent-uninstall for that.
+# Stop the trading agent + forwarder + watchdog. Does not unload the launchd
+# jobs; use bin/agent-uninstall for that.
 set -euo pipefail
 
-# Stop clients (bridge, forwarder, watchdog) first; agent last so the socket
+# Stop clients (forwarder, watchdog) first; agent last so the socket
 # stays alive until everyone has finished writing.
 launchctl stop com.jasonli.trading-watchdog || true
 launchctl stop com.jasonli.trading-extension-forwarder || true
-launchctl stop com.jasonli.trading-bridge || true
 launchctl stop com.jasonli.trading-agent || true
 
-echo "stopped agent + bridge + extension-forwarder + watchdog"
+echo "stopped agent + extension-forwarder + watchdog"
 exec "$(dirname "$0")/agent-status"
