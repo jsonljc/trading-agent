@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
 Audit each trader profile's discord_author_pattern against the authors
-actually captured in signal_events. Prints a table; exits non-zero if
-any tracked channel has < 50% of its signals matched by the configured
-pattern (drift detector).
+actually captured in signal_events. Prints a table; exits non-zero (DRIFT)
+when, for any tracked channel, the configured pattern is NOT the modal
+non-empty author AND matches fewer than 5 messages. Channels with
+multi-poster traffic (e.g. Naz also posts in pup-danny's channel) stay OK
+as long as the configured trader is the dominant voice. Empty-author rows
+are ignored when picking the modal author (separate capture bug).
 
 Usage:
     python bin/audit_trader_patterns.py
