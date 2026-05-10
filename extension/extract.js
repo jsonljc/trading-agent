@@ -4,11 +4,15 @@
 //
 // Selectors are attribute-based ([id^=...], [class*=...]) because Discord
 // rotates class hashes on every release.
+//
+// Author resolution: Discord groups consecutive same-author messages and
+// only renders the username on the first message in the cluster. For
+// grouped continuations we walk previous siblings until we find a
+// chat-messages-... element with a username node and inherit that author.
 (function (root) {
   function extractMessage(el) {
     if (!el || !el.id || !el.id.startsWith("chat-messages-")) return null;
 
-    // chat-messages-<channelId>-<messageId>
     const parts = el.id.split("-");
     const message_id = parts[parts.length - 1];
     if (!message_id) return null;
@@ -16,7 +20,14 @@
     const contentEl = el.querySelector('[id^="message-content-"]');
     const content = contentEl ? contentEl.innerText : "";
 
-    const usernameEl = el.querySelector('[class*="username"]');
+    let usernameEl = el.querySelector('[class*="username"]');
+    let cursor = el;
+    while (!usernameEl && cursor.previousElementSibling) {
+      cursor = cursor.previousElementSibling;
+      if (cursor.id && cursor.id.startsWith("chat-messages-")) {
+        usernameEl = cursor.querySelector('[class*="username"]');
+      }
+    }
     const author = usernameEl ? usernameEl.innerText.trim() : "";
 
     const timeEl = el.querySelector("time");
@@ -26,7 +37,6 @@
   }
 
   function channelIdFromUrl(url) {
-    // https://discord.com/channels/<server_id>/<channel_id>
     const m = url.match(/\/channels\/(\d+)\/(\d+)/);
     if (!m) return { server_id: "", channel_id: "" };
     return { server_id: m[1], channel_id: m[2] };
