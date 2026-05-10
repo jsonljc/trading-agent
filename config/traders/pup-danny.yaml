@@ -1,6 +1,6 @@
 handle: pup-danny
 display_name: Pup Danny
-discord_author_pattern: "Pup Danny"
+discord_author_pattern: "The Pup of Wall St"
 alert_mention: ""
 require_alert_mention: false
 bot_authors_to_skip: []
