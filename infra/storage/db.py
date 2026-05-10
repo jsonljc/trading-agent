@@ -217,6 +217,8 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     CREATE TABLE IF NOT EXISTS does not patch existing tables."""
     await _add_column_if_missing(conn, "trade_intents", "partial_execution_reason", "TEXT")
     await _add_column_if_missing(conn, "trade_intent_trims", "fire_started_at", "TEXT")
+    await _add_column_if_missing(conn, "trade_intents", "fill_qty", "INTEGER")
+    await _add_column_if_missing(conn, "trade_intents", "parent_intent_id", "TEXT")
 
 
 async def _add_column_if_missing(conn: aiosqlite.Connection, table: str,
