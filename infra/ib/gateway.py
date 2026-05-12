@@ -49,11 +49,18 @@ class _CircuitBreaker:
             raise IBGatewayUnavailable("circuit open")
 
 
-_RECONNECT_BACKOFF_SECONDS = (5, 10, 30, 60, 60)
+# Reconnect backoff ramps up then plateaus at the last value forever.
+# Indefinite retry — we never give up. Operators are alerted via the
+# on_reconnect_failing callback at elapsed-time thresholds (see below).
+_RECONNECT_RAMP_SECONDS = (5, 10, 30, 60)
+_RECONNECT_PLATEAU_SECONDS = 60
+# Minutes-elapsed at which on_reconnect_failing fires (then every hour after).
+_RECONNECT_ALERT_THRESHOLDS_MINUTES = (5, 15, 30, 60)
 
 
 class IBGateway:
-    def __init__(self, policy, on_disconnect=None, on_reconnect=None) -> None:
+    def __init__(self, policy, on_disconnect=None, on_reconnect=None,
+                 on_reconnect_failing=None) -> None:
         self._policy = policy
         self._ib = None
         self._connected = False
@@ -62,6 +69,9 @@ class IBGateway:
         self._write_breaker = _CircuitBreaker()
         self._on_disconnect = on_disconnect  # async callable() — fired once per drop
         self._on_reconnect = on_reconnect    # async callable() — fired once per recovery
+        # async callable(elapsed_minutes: int) — escalating alert while reconnect
+        # keeps failing past the thresholds above.
+        self._on_reconnect_failing = on_reconnect_failing
         self._reconnect_task: asyncio.Task | None = None
         self._intentional_disconnect = False
 
@@ -100,11 +110,18 @@ class IBGateway:
                 await self._on_disconnect()
             except Exception:
                 logger.exception("on_disconnect notifier failed")
-        for delay in _RECONNECT_BACKOFF_SECONDS:
+        started_at = time.monotonic()
+        alerted_at_minutes: set[int] = set()
+        attempt = 0
+        while True:
+            delay = (_RECONNECT_RAMP_SECONDS[attempt]
+                     if attempt < len(_RECONNECT_RAMP_SECONDS)
+                     else _RECONNECT_PLATEAU_SECONDS)
             await asyncio.sleep(delay)
+            attempt += 1
             try:
                 await self.connect()
-                logger.info("IB Gateway reconnect succeeded")
+                logger.info("IB Gateway reconnect succeeded after %d attempts", attempt)
                 if self._on_reconnect:
                     try:
                         await self._on_reconnect()
@@ -112,8 +129,31 @@ class IBGateway:
                         logger.exception("on_reconnect notifier failed")
                 return
             except Exception as exc:
-                logger.warning("Reconnect attempt failed: %s", exc)
-        logger.error("IB Gateway reconnect gave up after %d attempts", len(_RECONNECT_BACKOFF_SECONDS))
+                logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
+            await self._maybe_alert_reconnect_failing(started_at, alerted_at_minutes)
+
+    async def _maybe_alert_reconnect_failing(
+            self, started_at: float, alerted: set[int]) -> None:
+        if self._on_reconnect_failing is None:
+            return
+        elapsed_min = int((time.monotonic() - started_at) // 60)
+        # Threshold list = the ramp-up alerts plus every full hour after the
+        # last ramp threshold. Picking the *largest* unfired threshold keeps
+        # us from spamming when multiple thresholds get crossed during a single
+        # backoff sleep (e.g. machine slept).
+        thresholds = set(_RECONNECT_ALERT_THRESHOLDS_MINUTES)
+        last_ramp = max(_RECONNECT_ALERT_THRESHOLDS_MINUTES)
+        if elapsed_min > last_ramp:
+            thresholds.add((elapsed_min // 60) * 60)
+        candidates = [t for t in thresholds if t <= elapsed_min and t not in alerted]
+        if not candidates:
+            return
+        threshold = max(candidates)
+        alerted.add(threshold)
+        try:
+            await self._on_reconnect_failing(threshold)
+        except Exception:
+            logger.exception("on_reconnect_failing notifier failed")
 
     async def qualify(self, contract_ref: BrokerContractRef) -> BrokerContractRef:
         self._read_breaker.check()

@@ -80,7 +80,21 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         except Exception:
             logger.exception("failed to send IB reconnect alert")
 
-    gateway = IBGateway(policy, on_disconnect=_on_ib_disconnect, on_reconnect=_on_ib_reconnect)
+    async def _on_ib_reconnect_failing(elapsed_minutes: int) -> None:
+        try:
+            await telegram.send_message(
+                f"🚨 IB Gateway still offline after {elapsed_minutes} minutes — "
+                f"signals are being silently dropped. Check the gateway process."
+            )
+        except Exception:
+            logger.exception("failed to send IB reconnect-failing alert")
+
+    gateway = IBGateway(
+        policy,
+        on_disconnect=_on_ib_disconnect,
+        on_reconnect=_on_ib_reconnect,
+        on_reconnect_failing=_on_ib_reconnect_failing,
+    )
     await gateway.connect()
 
     from agent.registry import build_phase1_chain, build_phase2b_execution_chain
@@ -110,6 +124,13 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
     async def on_skip(ctx: Context, reason: str) -> None:
         await audit_writer.write(ctx, "skipped")
+        # Surface broker-unavailable skips on actionable signals — without this
+        # the agent silently drops every fired classification while IB is down
+        # (see ADEA on 2026-05-11: gateway dropped 19:45 ET, ADEA HIGH fires
+        # at 20:06 and 20:47 dropped with reason 'circuit open').
+        from skills.posttrade.telegram_digest import TelegramDigest
+        if TelegramDigest.is_broker_unavailable_skip(ctx, reason):
+            await digest_skill.send_missed_signal_alert(ctx, reason)
 
     async def on_success(ctx: Context) -> None:
         await audit_writer.write(ctx, "success")

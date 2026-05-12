@@ -56,3 +56,42 @@ async def test_error_digest():
     assert "ticker ambiguous" in client.sent[0]
 
 
+def test_is_broker_unavailable_skip_recognises_circuit_open():
+    ctx = make_ctx(bucket="HIGH")
+    assert TelegramDigest.is_broker_unavailable_skip(
+        ctx, "ambiguous_signal: ticker 'ADEA' could not be validated: circuit open"
+    )
+
+
+def test_is_broker_unavailable_skip_ignores_non_actionable_buckets():
+    ctx = make_ctx(bucket="SKIP")
+    assert not TelegramDigest.is_broker_unavailable_skip(
+        ctx, "ambiguous_signal: circuit open"
+    )
+
+
+def test_is_broker_unavailable_skip_ignores_non_broker_reasons():
+    ctx = make_ctx(bucket="HIGH")
+    assert not TelegramDigest.is_broker_unavailable_skip(
+        ctx, "no_entry:bucket=SKIP"
+    )
+
+
+async def test_missed_signal_alert_includes_trader_ticker_bucket():
+    client = FakeTelegramClient()
+    skill = TelegramDigest(client, mode="signal_only")
+    ctx = make_ctx(
+        bucket="HIGH", ticker="ADEA", side="long", trader_handle="mystic"
+    )
+    await skill.send_missed_signal_alert(
+        ctx, "ambiguous_signal: ticker 'ADEA' could not be validated: circuit open"
+    )
+    assert len(client.sent) == 1
+    msg = client.sent[0]
+    assert "MISSED SIGNAL" in msg
+    assert "mystic" in msg
+    assert "ADEA" in msg
+    assert "HIGH" in msg
+    assert "circuit open" in msg
+
+
