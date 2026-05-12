@@ -28,3 +28,15 @@ conviction_examples:
   - msg: "OPENING $SEI (SOLARIS ENERGY INFRASTRUCTURE) Ahead of Monday earnings. Mcap: $4B Short Interest: 23%. GE Vernova reported a blockuster Q1 and the read-through is strong. Strong sympathy to $GEV and a legitimate behind-the-meter power play."
     bucket: HIGH
     why: "OPENING entry with structured thesis (catalyst + cross-read + theme), STW's standard high-conviction format"
+  - msg: "Pushing $P, this was a timely upsize for us"
+    bucket: SKIP
+    why: "past-tense self-congratulation ('was a timely upsize'), references an earlier trade — not a new entry now"
+  - msg: "Raised weighting slightly on $P from 0.5% to a full 1% -- same calls as before"
+    bucket: SKIP
+    why: "trivial 0.5pp weight bump with 'same calls as before' — minor adjustment, not a fresh conviction entry"
+  - msg: "Upsized $LUMN $7C for Jan 2027 (paid for by rolling out the other strikes) so net weighting remains largely the same"
+    bucket: SKIP
+    why: "options roll explicitly stating 'net weighting remains largely the same' — net exposure unchanged, not a new entry"
+  - msg: "ADEIA $ADEA VALUABLE SEMICONDUCTOR IP. Adeia owns the foundational IP behind hybrid bonding ... blue-chip customer adoption (SK Hynix, Micron, AMD, Samsung, SanDisk) ... 12x EV/EBITDA and 20x FCF ... I've taken a 2% position in the $30C for June @ $1.50 and the $30C for September @ $3.58 avg."
+    bucket: HIGH
+    why: "structured multi-pillar thesis (moat + customer validation + valuation) plus explicit fresh 2% position with sizing detail — STW's standard high-conviction format"

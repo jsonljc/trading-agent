@@ -38,8 +38,6 @@ watched_channels:
   mystic: {}
   wallstengine: {}
   stocktalkweekly: {}
-  pup-danny: {}
-  urkel: {}
 
 discord_bundle_id: "com.hnc.Discord"
 telegram:
@@ -85,5 +83,3 @@ discord_extension:
     "1229546005788098580": stocktalkweekly
     "1217309136681832540": mystic
     "1248378121451733083": wallstengine
-    "1221605346305642558": pup-danny
-    "1151611275709788253": urkel

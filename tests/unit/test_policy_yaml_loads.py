@@ -8,8 +8,7 @@ def test_live_policy_yaml_loads():
     assert cm["1229546005788098580"] == "stocktalkweekly"
     assert cm["1217309136681832540"] == "mystic"
     assert cm["1248378121451733083"] == "wallstengine"
-    assert cm["1221605346305642558"] == "pup-danny"
-    assert cm["1151611275709788253"] == "urkel"
+    # pup-danny and urkel were removed 2026-05-12 — too noisy / recap-heavy
     s = pol.execution.sizing
     assert s.per_channel["stocktalkweekly"].high.shares == 0.20
     assert s.per_channel["mystic"].low.shares == 0.10
