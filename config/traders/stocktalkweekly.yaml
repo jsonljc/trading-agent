@@ -11,8 +11,8 @@ classifier_model: claude-haiku-4-5
 availability_phrases: ["off the grid", "passover", "on vacation"]
 conviction_examples:
   - msg: "This will join the 'Prospective Positions' group with a small 1% weighting @ $41.22"
-    bucket: LOW
-    why: "explicit 1%, prospective starter"
+    bucket: HIGH
+    why: "STW actionable entry — every STW entry is sized HIGH per user directive; the 1% the trader put in is informational only, sizing is driven by our per-channel HIGH allocation"
   - msg: "names that I want to upsize when the opportunity arises"
     bucket: SKIP
     why: "intent to upsize later, not an entry now"
@@ -40,3 +40,6 @@ conviction_examples:
   - msg: "ADEIA $ADEA VALUABLE SEMICONDUCTOR IP. Adeia owns the foundational IP behind hybrid bonding ... blue-chip customer adoption (SK Hynix, Micron, AMD, Samsung, SanDisk) ... 12x EV/EBITDA and 20x FCF ... I've taken a 2% position in the $30C for June @ $1.50 and the $30C for September @ $3.58 avg."
     bucket: HIGH
     why: "structured multi-pillar thesis (moat + customer validation + valuation) plus explicit fresh 2% position with sizing detail — STW's standard high-conviction format"
+  - msg: "$FIVN compiling my notes now, will post DD shortly @Stock Talk Weekly - Alerts"
+    bucket: HIGH
+    why: "STW's pre-DD entry alert: ticker + 'compiling notes' / 'will post DD shortly' means he's entered now and the thesis post follows separately. Fire HIGH — the SameDayDedupGate prevents the follow-up DD post from firing a second buy on the same ticker"

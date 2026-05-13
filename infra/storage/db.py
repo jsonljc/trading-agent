@@ -174,10 +174,14 @@ CREATE TABLE IF NOT EXISTS classification_log (
     size_source TEXT NOT NULL,
     action_taken TEXT NOT NULL,
     reason TEXT,
+    ticker TEXT,
+    side TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_classification_log_trader_time
     ON classification_log(trader_handle, created_at);
+CREATE INDEX IF NOT EXISTS idx_classification_log_dedup
+    ON classification_log(trader_handle, ticker, side, action_taken, created_at);
 
 CREATE TABLE IF NOT EXISTS trader_examples_pending (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -219,6 +223,14 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     await _add_column_if_missing(conn, "trade_intent_trims", "fire_started_at", "TEXT")
     await _add_column_if_missing(conn, "trade_intents", "fill_qty", "INTEGER")
     await _add_column_if_missing(conn, "trade_intents", "parent_intent_id", "TEXT")
+    # SameDayDedupGate queries by (trader, ticker, side) — denormalize from
+    # the JSON blob so we can index it.
+    await _add_column_if_missing(conn, "classification_log", "ticker", "TEXT")
+    await _add_column_if_missing(conn, "classification_log", "side", "TEXT")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_classification_log_dedup "
+        "ON classification_log(trader_handle, ticker, side, action_taken, created_at)"
+    )
 
 
 async def _add_column_if_missing(conn: aiosqlite.Connection, table: str,
