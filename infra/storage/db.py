@@ -180,8 +180,10 @@ CREATE TABLE IF NOT EXISTS classification_log (
 );
 CREATE INDEX IF NOT EXISTS idx_classification_log_trader_time
     ON classification_log(trader_handle, created_at);
-CREATE INDEX IF NOT EXISTS idx_classification_log_dedup
-    ON classification_log(trader_handle, ticker, side, action_taken, created_at);
+-- idx_classification_log_dedup on (trader_handle, ticker, side, action_taken,
+-- created_at) is created in _migrate() AFTER the ticker/side columns are
+-- added — putting it here breaks bootstrap on legacy DBs whose pre-existing
+-- table lacks those columns (CREATE TABLE IF NOT EXISTS is a no-op).
 
 CREATE TABLE IF NOT EXISTS trader_examples_pending (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
