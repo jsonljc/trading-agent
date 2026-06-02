@@ -16,6 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 OPTION_MULTIPLIER = 100
+EPS = 1e-9  # float-zero band: realized in (-EPS, EPS) counts neither win nor loss
 
 
 @dataclass
@@ -138,9 +139,9 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
         if is_closed:
             s.closed_lots += 1
             closed_realized[channel].append(realized)
-            if realized > 0:
+            if realized > EPS:
                 s.wins += 1
-            elif realized < 0:
+            elif realized < -EPS:
                 s.losses += 1
             ticker_acc[key][1] += 1
         elif itype == "option":
@@ -154,8 +155,8 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
 
     for ch, s in by_channel.items():
         cr = closed_realized[ch]
-        wins = [r for r in cr if r > 0]
-        losses = [r for r in cr if r < 0]
+        wins = [r for r in cr if r > EPS]
+        losses = [r for r in cr if r < -EPS]
         s.avg_win = sum(wins) / len(wins) if wins else 0.0
         s.avg_loss = sum(losses) / len(losses) if losses else 0.0
         s.best_lot = max(cr) if cr else 0.0

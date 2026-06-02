@@ -168,3 +168,15 @@ def test_zero_cost_entry_with_sells_is_flagged_and_excluded():
     assert s.realized == 0.0
     assert s.closed_lots == 0
     assert any("AMD" in f and "fill_price" in f for f in s.flags)
+
+
+def test_near_zero_lot_is_neither_win_nor_loss():
+    # realized ~1e-12 (tiny float residue) must not count as a win or loss
+    # buy 1 option @ 1.0; sell 1 @ 1.0 + 1e-14 → realized = (1e-14)*100 = 1e-12
+    e = _entry("a", itype="option", fill_price=1.0, fill_qty=1)
+    sell_price = 1.0 + 1e-14  # proceeds exceed cost by 1e-12 after 100x mult
+    report = compute_attribution([e], [_sell("a", 1, sell_price)], [])
+    s = report.sources[0]
+    assert s.closed_lots == 1
+    assert s.wins == 0
+    assert s.losses == 0

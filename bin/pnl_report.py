@@ -83,9 +83,11 @@ def render_table(report: AttributionReport) -> str:
     lines.append(header)
     lines.append("-" * len(header))
     for s in report.sources:
+        avg_win_str = f"{s.avg_win:>+10.2f}" if s.wins else f"{'-':>10}"
+        avg_loss_str = f"{s.avg_loss:>+10.2f}" if s.losses else f"{'-':>10}"
         lines.append(
             f"{s.channel:<14} {s.realized:>+12.2f} {s.closed_lots:>5} "
-            f"{s.win_rate * 100:>5.0f}% {s.avg_win:>+10.2f} {s.avg_loss:>+10.2f}")
+            f"{s.win_rate * 100:>5.0f}% {avg_win_str} {avg_loss_str}")
         for l in s.by_ticker:
             lines.append(f"    {l.ticker:<10} ({l.instrument_type:<6}) "
                          f"{l.realized:>+12.2f}  [{l.closed_lots} closed]")
