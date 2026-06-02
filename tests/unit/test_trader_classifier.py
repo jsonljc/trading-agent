@@ -266,6 +266,25 @@ async def test_stw_size_floor_does_not_rescue_low_confidence_skip():
 
 
 @pytest.mark.asyncio
+async def test_stw_size_floor_lifts_after_wse_small_size_override():
+    # High-confidence HIGH + small stated size: the wse_small_size_override
+    # knocks HIGH->LOW, then size_floor must lift it back to HIGH. Pins the
+    # ordering of the two overrides in the LLM path.
+    profile = make_profile(handle="stocktalkweekly", size_in_msg=False, size_floor="HIGH")
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": True, "ticker": "ADEA", "side": "long",
+                   "bucket": "HIGH", "confidence": 0.9, "reason": "moat thesis"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Stock Talk Weekly", "trader_handle": "stocktalkweekly",
+        "full_message_text": "ADEA 2% weighting -- strong moat thesis",  # no entry verb
+    })
+    result = await classifier.run(ctx)
+    assert ctx.get("bucket") == "HIGH"
+    assert ctx.get("size_source") == "size_floor"
+
+
+@pytest.mark.asyncio
 async def test_wse_small_size_override_unaffected_without_floor():
     profile = make_profile(handle="wse", size_in_msg=False, size_floor=None)
     registry = TraderRegistry([profile])

@@ -45,8 +45,9 @@ def load_profile(path: Path) -> TraderProfile:
             raise ValueError(f"invalid bucket {e['bucket']!r} in {path}")
         examples.append(ConvictionExample(msg=e["msg"], bucket=e["bucket"], why=e.get("why", "")))
     size_floor = raw.get("size_floor")
-    if size_floor is not None and size_floor not in VALID_BUCKETS:
-        raise ValueError(f"invalid size_floor {size_floor!r} in {path}")
+    if size_floor is not None and size_floor != "HIGH":
+        raise ValueError(
+            f"invalid size_floor {size_floor!r} in {path} (only 'HIGH' is supported)")
     return TraderProfile(
         handle=raw["handle"],
         display_name=raw["display_name"],
