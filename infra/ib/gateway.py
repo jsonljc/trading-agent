@@ -234,14 +234,21 @@ class IBGateway:
                     bid = float(td.bid) if td.bid and td.bid == td.bid and td.bid > 0 else 0.0
                     ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
                     mid = (bid + ask) / 2
-                    spread_pct = ((ask - bid) / ask) if ask > 0 else 1.0
+                    # Spread relative to MID (not ask) — the standard liquidity
+                    # measure. mid==0 (no two-sided quote) -> treat as max-wide.
+                    spread_pct = ((ask - bid) / mid) if mid > 0 else 1.0
                     ref = _from_ib_contract(q)
                     ref.qualified = True
                     expiry_fmt = f"{expiry[:4]}-{expiry[4:6]}-{expiry[6:]}"
+                    # OI/volume need generic tick 101 + (usually) live data;
+                    # under delayed data they arrive nan/missing -> None, and the
+                    # liquidity gate fails open on the spread alone.
+                    oi = _safe_positive_int(getattr(td, "callOpenInterest", None))
+                    vol = _safe_positive_int(getattr(td, "volume", None))
                     return OptionCandidate(
                         symbol=ticker, expiry=expiry_fmt, strike=strike, right=right,
                         bid=bid, ask=ask, mid=mid, spread_pct=spread_pct,
-                        open_interest=None, volume=None,
+                        open_interest=oi, volume=vol,
                         multiplier=int(q.multiplier or 100), contract_ref=ref,
                     )
                 except Exception:
@@ -504,6 +511,20 @@ class IBGateway:
                 raise LiveTradingBlocked(
                     f"account {self._account_id} not in allowed paper prefixes {p.paper_account_prefixes}"
                 )
+
+
+def _safe_positive_int(val) -> int | None:
+    """Coerce an IB ticker field (OI/volume) to a positive int, else None.
+
+    Handles nan, non-numeric placeholders (MagicMock in tests / missing fields),
+    and non-positive sentinels — any of which mean 'unavailable'."""
+    if not isinstance(val, (int, float)):
+        return None
+    if val != val:  # nan
+        return None
+    if val <= 0:
+        return None
+    return int(val)
 
 
 def _to_ib_contract(ref: BrokerContractRef):

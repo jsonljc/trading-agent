@@ -6,16 +6,20 @@ from skills.execution.contract_selector import ContractSelector
 from infra.ib.models import OptionCandidate, BrokerContractRef
 
 
-def _policy(min_expiry_days=180, min_bid=0.01, max_spread_pct=0.40, strike_policy="closest_itm_call"):
+def _policy(min_expiry_days=180, min_bid=0.01, max_spread_pct=0.40,
+            strike_policy="closest_itm_call", min_open_interest=0, min_volume=0):
     p = MagicMock()
     p.instrument_policy.min_expiry_days = min_expiry_days
     p.instrument_policy.strike_policy = strike_policy
     p.pricing_policy_guards.min_bid = min_bid
     p.pricing_policy_guards.max_spread_pct = max_spread_pct
+    p.pricing_policy_guards.min_open_interest = min_open_interest
+    p.pricing_policy_guards.min_volume = min_volume
     return p
 
 
-def _candidate(strike, expiry_days=200, spread_pct=0.10, bid=5.0, ask=5.5):
+def _candidate(strike, expiry_days=200, spread_pct=0.10, bid=5.0, ask=5.5,
+               open_interest=100, volume=50):
     expiry = (date.today() + timedelta(days=expiry_days)).strftime("%Y-%m-%d")
     ref = BrokerContractRef(symbol="AAPL", sec_type="OPT", exchange="SMART",
                              currency="USD", expiry=expiry.replace("-", ""),
@@ -23,7 +27,8 @@ def _candidate(strike, expiry_days=200, spread_pct=0.10, bid=5.0, ask=5.5):
     mid = (bid + ask) / 2
     return OptionCandidate(symbol="AAPL", expiry=expiry, strike=strike, right="C",
                             bid=bid, ask=ask, mid=mid, spread_pct=spread_pct,
-                            open_interest=100, volume=50, multiplier=100, contract_ref=ref)
+                            open_interest=open_interest, volume=volume,
+                            multiplier=100, contract_ref=ref)
 
 
 def _ctx(instrument_type="option", candidates=None, ticker="AAPL", spot=155.0):
@@ -121,3 +126,39 @@ async def test_empty_candidates_fails():
     result = await selector.run(_ctx(candidates=[], spot=155.0))
     assert result.status == "fail"
     assert "no_eligible_contract" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rejects_candidate_below_min_open_interest():
+    # OI present and below the floor -> rejected. Only an OTM at strike 160 with
+    # adequate OI survives.
+    candidates = [
+        _candidate(150, open_interest=50),    # below floor -> dropped
+        _candidate(160, open_interest=5000),  # ok
+    ]
+    selector = ContractSelector(_policy(min_open_interest=100))
+    result = await selector.run(_ctx(candidates=candidates, spot=155.0))
+    assert result.status == "success"
+    assert result.updates["selected_strike"] == 160.0
+
+
+@pytest.mark.asyncio
+async def test_none_open_interest_passes_fail_open():
+    # Delayed data: OI is None -> gate must fail OPEN (allow), gating on spread only.
+    candidates = [_candidate(150, open_interest=None, volume=None)]
+    selector = ContractSelector(_policy(min_open_interest=100, min_volume=10))
+    result = await selector.run(_ctx(candidates=candidates, spot=155.0))
+    assert result.status == "success"
+    assert result.updates["selected_strike"] == 150.0
+
+
+@pytest.mark.asyncio
+async def test_rejects_candidate_below_min_volume():
+    candidates = [
+        _candidate(150, volume=2),             # below floor -> dropped
+        _candidate(160, volume=500),           # ok
+    ]
+    selector = ContractSelector(_policy(min_volume=10))
+    result = await selector.run(_ctx(candidates=candidates, spot=155.0))
+    assert result.status == "success"
+    assert result.updates["selected_strike"] == 160.0

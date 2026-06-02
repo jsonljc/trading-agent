@@ -1,8 +1,11 @@
 from __future__ import annotations
+import logging
 from datetime import date, datetime
 from agent.context import Context, SkillResult
 from agent.skill import Skill
 from skills.execution._options_leg import already_terminated, partial_or
+
+logger = logging.getLogger(__name__)
 
 
 class ContractSelector(Skill):
@@ -34,6 +37,22 @@ class ContractSelector(Skill):
                 continue
             if c.spread_pct > pg.max_spread_pct:
                 continue
+            # Liquidity gate, fail-open: OI/volume only gate when present.
+            # Under delayed market data they arrive as None and we lean on the
+            # (mid-based) spread alone.
+            min_oi = getattr(pg, "min_open_interest", 0)
+            min_vol = getattr(pg, "min_volume", 0)
+            if c.open_interest is not None and c.open_interest < min_oi:
+                logger.info("ContractSelector: drop %s %s OI=%d < %d",
+                            c.strike, c.expiry, c.open_interest, min_oi)
+                continue
+            if c.volume is not None and c.volume < min_vol:
+                logger.info("ContractSelector: drop %s %s vol=%d < %d",
+                            c.strike, c.expiry, c.volume, min_vol)
+                continue
+            if c.open_interest is None and c.volume is None:
+                logger.debug("ContractSelector: %s %s liquidity data unavailable, "
+                             "gating on spread only", c.strike, c.expiry)
             eligible.append(c)
 
         if not eligible:
