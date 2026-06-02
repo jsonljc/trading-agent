@@ -152,8 +152,28 @@ async def replay_one(event_row, policy, recorded_llm, *,
         })
 
         capture = CapturingTraceStore()
-        orch = Orchestrator(full_chain, capture)
+        # The Orchestrator only surfaces the terminating skip/fail reason via its
+        # callbacks (finish() is called without a reason for skips), so capture it
+        # here for the decision-path report.
+        terminal = {"reason": None}
+
+        async def _on_skip(ctx, reason):
+            terminal["reason"] = reason
+
+        async def _on_fail(ctx, reason):
+            terminal["reason"] = reason
+
+        orch = Orchestrator(full_chain, capture, on_skip=_on_skip, on_fail=_on_fail)
+        # Measure whether THIS alert's classification actually replayed a recorded
+        # LLM response. We can't key on the raw message text: MessageNormalizer
+        # rewrites full_message_text (whitespace-collapsed) before the classifier
+        # runs, and the recorded responses are keyed by that normalized text. A
+        # hit-delta over the run is robust to that rewrite. (hits stays 0 for
+        # alerts classified by the deterministic shortcut, which never call the
+        # LLM — correctly reported as "no recorded LLM used".)
+        hits_before = recorded_llm.hits
         await orch.run(ctx)
+        llm_recorded = recorded_llm.hits > hits_before
 
         rec = capture.records.get(trace_id, {})
         updates = rec.get("updates", {})
@@ -167,9 +187,9 @@ async def replay_one(event_row, policy, recorded_llm, *,
             side=updates.get("side"),
             ticker=updates.get("ticker"),
             final_status=rec.get("status", "unknown"),
-            final_reason=rec.get("reason"),
+            final_reason=terminal["reason"] or rec.get("reason"),
             would_be_orders=_summarize_orders(gateway.placed_orders),
-            llm_recorded=recorded_llm.was_recorded(msg),
+            llm_recorded=llm_recorded,
         )
         return result
     finally:
