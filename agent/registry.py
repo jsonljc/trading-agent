@@ -3,7 +3,8 @@ from agent.skill import Skill
 
 def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
                        trader_registry=None, classification_log_store=None,
-                       llm_classifier=None) -> list:
+                       llm_classifier=None, trade_intent_store=None,
+                       exits_store=None) -> list:
     from skills.signal.message_normalizer import MessageNormalizer
     from skills.signal.trader_router import TraderRouter
     from skills.signal.trader_classifier import TraderClassifier
@@ -25,12 +26,31 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
         MessageNormalizer(policy),
         TraderRouter(trader_registry),
         TraderClassifier(trader_registry, llm_classifier),
-        ClassificationLogger(classification_log_store),
-        # Dedup BEFORE EntrySkipGate so duplicates are logged then halted
-        SameDayDedupGate(classification_log_store),
-        EntrySkipGate(),                            # terminate non-actionable
-        IdempotencyCheck(policy, idempotency_store),
     ]
+
+    # Sell-following (Phase E): SellClassifier right after the entry classifier
+    # (logged by ClassificationLogger), SellFollower after dedup / before
+    # EntrySkipGate so a sell executes and halts the entry path. Both are gated
+    # on the execution deps so signal-only compositions stay entry-only.
+    sells_enabled = (gateway is not None and trade_intent_store is not None
+                     and exits_store is not None)
+    if sells_enabled:
+        from skills.signal.sell_classifier import SellClassifier
+        skills_list.append(SellClassifier(trader_registry, llm_classifier))
+
+    skills_list.append(ClassificationLogger(classification_log_store))
+    # Dedup BEFORE EntrySkipGate so duplicates are logged then halted
+    skills_list.append(SameDayDedupGate(classification_log_store))
+
+    if sells_enabled:
+        from skills.execution.sell_follower import SellFollower
+        skills_list.append(SellFollower(
+            gateway, trade_intent_store, exits_store,
+            slippage_cap_pct=policy.execution.shares_slippage_cap_pct,
+            fill_timeout=policy.execution.fill_wait_timeout_seconds))
+
+    skills_list.append(EntrySkipGate())             # terminate non-actionable
+    skills_list.append(IdempotencyCheck(policy, idempotency_store))
 
     if gateway is not None:
         from skills.signal.ticker_validator import TickerValidator

@@ -44,3 +44,18 @@ conviction_examples:
   - msg: "$FIVN compiling my notes now, will post DD shortly @Stock Talk Weekly - Alerts"
     bucket: HIGH
     why: "STW's pre-DD entry alert: ticker + 'compiling notes' / 'will post DD shortly' means he's entered now and the thesis post follows separately. Fire HIGH — the SameDayDedupGate prevents the follow-up DD post from firing a second buy on the same ticker"
+
+# Sell/exit teaching examples for SellClassifier (full = close, partial = trim).
+sell_examples:
+  - msg: "out of NVDA here, done with it"
+    scope: full
+    why: explicit full close
+  - msg: "sold the rest of my AAPL"
+    scope: full
+    why: closing remainder
+  - msg: "trimmed half my TSLA into strength"
+    scope: partial
+    why: partial trim, half
+  - msg: "scaling out of MSFT, took some profits"
+    scope: partial
+    why: partial reduction

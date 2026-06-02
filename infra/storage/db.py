@@ -204,6 +204,31 @@ CREATE TABLE IF NOT EXISTS trader_state (
     unavailable_until TEXT,
     updated_at TEXT NOT NULL
 );
+
+-- Sell-following (Phase E): idempotency claim per sell-event content hash, and
+-- the per-intent exit ledger that nets against fill_qty for remaining-held qty.
+CREATE TABLE IF NOT EXISTS sell_event_claims (
+    fingerprint TEXT PRIMARY KEY,
+    event_id    TEXT,
+    claimed_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS position_exits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint      TEXT NOT NULL,
+    event_id         TEXT,
+    intent_id        TEXT NOT NULL,
+    channel          TEXT,
+    ticker           TEXT,
+    scope            TEXT,
+    requested_qty    INTEGER,
+    sold_qty         INTEGER,
+    sold_avg_price   REAL,
+    broker_order_ref TEXT,
+    reason           TEXT,
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_position_exits_intent
+    ON position_exits(intent_id);
 """
 
 
@@ -261,6 +286,24 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_classification_log_dedup "
         "ON classification_log(trader_handle, ticker, side, action_taken, created_at)"
+    )
+    # Phase E sell-following tables on legacy DBs (CREATE TABLE IF NOT EXISTS in
+    # SCHEMA is a no-op only if the DB was bootstrapped fresh; explicit here too).
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS sell_event_claims ("
+        "fingerprint TEXT PRIMARY KEY, event_id TEXT, claimed_at TEXT NOT NULL)"
+    )
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS position_exits ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, "
+        "event_id TEXT, intent_id TEXT NOT NULL, channel TEXT, ticker TEXT, "
+        "scope TEXT, requested_qty INTEGER, sold_qty INTEGER, "
+        "sold_avg_price REAL, broker_order_ref TEXT, reason TEXT, "
+        "created_at TEXT NOT NULL)"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_position_exits_intent "
+        "ON position_exits(intent_id)"
     )
 
 

@@ -40,3 +40,42 @@ def test_invalid_size_floor_rejected(tmp_path):
     )
     with pytest.raises(ValueError, match="size_floor"):
         load_profile(p)
+
+
+def test_each_seed_profile_has_sell_examples():
+    # The sell classifier ships with per-trader teaching examples (mirrors the
+    # entry conviction_examples), not an empty prompt.
+    for p in load_all_profiles(TRADERS_DIR):
+        assert len(p.sell_examples) >= 2, p.handle
+        assert all(e.scope in ("full", "partial") for e in p.sell_examples)
+
+
+def test_sell_examples_load_and_default_empty(tmp_path):
+    from agent.traders.profile import SellExample
+    # Defaults to empty when absent.
+    p = tmp_path / "noex.yaml"
+    p.write_text(
+        "handle: x\ndisplay_name: X\ndiscord_author_pattern: X\nalert_mention: '@x'\n")
+    assert load_profile(p).sell_examples == ()
+    # Loads scope-labelled examples when present.
+    p2 = tmp_path / "ex.yaml"
+    p2.write_text(
+        "handle: y\ndisplay_name: Y\ndiscord_author_pattern: Y\nalert_mention: '@y'\n"
+        "sell_examples:\n"
+        "  - msg: 'sold half AAPL'\n    scope: partial\n    why: trim\n"
+        "  - msg: 'out of NVDA'\n    scope: full\n    why: full exit\n"
+    )
+    prof = load_profile(p2)
+    assert prof.sell_examples == (
+        SellExample(msg="sold half AAPL", scope="partial", why="trim"),
+        SellExample(msg="out of NVDA", scope="full", why="full exit"),
+    )
+
+
+def test_invalid_sell_example_scope_rejected(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text(
+        "handle: x\ndisplay_name: X\ndiscord_author_pattern: X\nalert_mention: '@x'\n"
+        "sell_examples:\n  - msg: 'sold AAPL'\n    scope: bogus\n")
+    with pytest.raises(ValueError, match="scope"):
+        load_profile(p)

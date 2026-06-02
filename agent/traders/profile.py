@@ -5,12 +5,21 @@ import yaml
 
 
 VALID_BUCKETS = {"LOW", "HIGH", "SKIP"}
+VALID_SELL_SCOPES = {"full", "partial"}
 
 
 @dataclass(frozen=True)
 class ConvictionExample:
     msg: str
     bucket: str
+    why: str
+
+
+@dataclass(frozen=True)
+class SellExample:
+    """Per-trader teaching example for the sell/exit classifier."""
+    msg: str
+    scope: str   # 'full' | 'partial'
     why: str
 
 
@@ -29,6 +38,7 @@ class TraderProfile:
     availability_phrases: tuple[str, ...]
     conviction_examples: tuple[ConvictionExample, ...]
     size_floor: str | None = None  # "HIGH" -> every actionable entry sized HIGH
+    sell_examples: tuple[SellExample, ...] = ()
 
 
 def load_profile(path: Path) -> TraderProfile:
@@ -48,6 +58,14 @@ def load_profile(path: Path) -> TraderProfile:
     if size_floor is not None and size_floor != "HIGH":
         raise ValueError(
             f"invalid size_floor {size_floor!r} in {path} (only 'HIGH' is supported)")
+    sell_examples = []
+    for e in raw.get("sell_examples", []):
+        if e.get("scope") not in VALID_SELL_SCOPES:
+            raise ValueError(
+                f"invalid sell_example scope {e.get('scope')!r} in {path} "
+                f"(must be 'full' or 'partial')")
+        sell_examples.append(
+            SellExample(msg=e["msg"], scope=e["scope"], why=e.get("why", "")))
     return TraderProfile(
         handle=raw["handle"],
         display_name=raw["display_name"],
@@ -62,6 +80,7 @@ def load_profile(path: Path) -> TraderProfile:
         availability_phrases=tuple(raw.get("availability_phrases", [])),
         conviction_examples=tuple(examples),
         size_floor=size_floor,
+        sell_examples=tuple(sell_examples),
     )
 
 

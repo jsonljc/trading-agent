@@ -8,6 +8,12 @@ _ENTRY_VERBS = re.compile(
     r"joining|joined|loading|took|grabbed|picked up|started|scaled in)\b",
     re.IGNORECASE,
 )
+_EXIT_VERBS = re.compile(
+    r"\b(sold|selling|sell|out of|closed|closing|close|trimmed|trimming|trim|"
+    r"taking profits|took profits|scaling out|scaled out|exiting|exited|exit|"
+    r"dumped|dumping|cut|stopped out|stop(?:ped)? out)\b",
+    re.IGNORECASE,
+)
 _SIZE_PCT = re.compile(
     r"(\d+(?:\.\d+)?)\s*%\s*(?:pos|position|weighting|wt|wtg)\b",
     re.IGNORECASE,
@@ -25,6 +31,7 @@ class Features:
     msg_length: int
     is_thread_reply: bool
     availability_phrase: str | None = None
+    exit_verb_present: bool = False
 
 
 def extract_features(
@@ -38,6 +45,7 @@ def extract_features(
     stated_size = float(size_match.group(1)) if size_match else None
 
     entry_verb = bool(_ENTRY_VERBS.search(msg))
+    exit_verb = bool(_EXIT_VERBS.search(msg))
 
     dollar_tickers = _DOLLAR_TICKERS.findall(msg)
     if dollar_tickers:
@@ -64,4 +72,5 @@ def extract_features(
         msg_length=len(msg),
         is_thread_reply=is_thread_reply,
         availability_phrase=availability,
+        exit_verb_present=exit_verb,
     )
