@@ -42,3 +42,41 @@ async def test_socket_reader_receives_event():
     assert len(received) == 1
     assert received[0].channel == "mystic"
     assert received[0].trigger_preview == "Long $AVEX"
+
+
+async def test_malformed_event_is_dead_lettered_and_alerted():
+    fd, socket_path = tempfile.mkstemp(suffix=".sock", dir="/tmp")
+    os.close(fd)
+    os.unlink(socket_path)
+    fd2, dl_path = tempfile.mkstemp(suffix=".jsonl", dir="/tmp")
+    os.close(fd2)
+    os.unlink(dl_path)
+
+    alerts: list[str] = []
+
+    async def on_parse_error(raw: str, err: str) -> None:
+        alerts.append(raw)
+
+    reader = SocketReader(socket_path, deadletter_path=dl_path,
+                          on_parse_error=on_parse_error)
+    task = asyncio.create_task(reader.start(lambda e: asyncio.sleep(0)))
+    await asyncio.sleep(0.1)
+
+    _, writer = await asyncio.open_unix_connection(socket_path)
+    writer.write(b'{not valid json at all}\n')   # malformed -> must NOT vanish
+    await writer.drain()
+    writer.close()
+    await asyncio.sleep(0.1)
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert reader.parse_error_count == 1
+    assert len(alerts) == 1
+    with open(dl_path) as f:
+        contents = f.read()
+    assert "not valid json" in contents
+    os.unlink(dl_path)

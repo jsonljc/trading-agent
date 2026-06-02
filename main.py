@@ -195,7 +195,21 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         slippage_cap_pct=policy.execution.shares_slippage_cap_pct,
     )
 
-    reader = SocketReader(socket_path)
+    async def _on_bridge_parse_error(raw: str, err: str) -> None:
+        try:
+            await telegram.send_message(
+                f"⚠️ <b>DROPPED SIGNAL</b> — a bridge event failed to parse and was "
+                f"dead-lettered (the Chrome extension is the only capture path).\n"
+                f"Error: {err}"
+            )
+        except Exception:
+            logger.exception("failed to send bridge parse-error alert")
+
+    reader = SocketReader(
+        socket_path,
+        deadletter_path="logs/bridge_deadletter.jsonl",
+        on_parse_error=_on_bridge_parse_error,
+    )
     logger.info("Trading agent Phase 2b ready. Listening on %s", socket_path)
     try:
         reconciler.start()
