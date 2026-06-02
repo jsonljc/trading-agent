@@ -33,6 +33,7 @@ from infra.storage.trim_ladder_store import TrimLadderStore
 from infra.llm.classifier_client import AnthropicClassifierClient
 from infra.telegram.client import TelegramClient
 from infra.bridge_client.socket_reader import SocketReader, TriggerEvent
+from skills.signal.message_normalizer import compute_fingerprint
 from agent.exit_ladder import ExitLadder
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -159,7 +160,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
             "trigger_preview": event.trigger_preview,
             "full_message_text": event.trigger_preview,
             "capture_mode": "bridge",
-            "message_fingerprint": "",
+            "message_fingerprint": compute_fingerprint(
+                event.channel, event.author, event.trigger_preview),
             "received_at": event.received_at,
         })
 
