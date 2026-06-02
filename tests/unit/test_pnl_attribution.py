@@ -10,3 +10,64 @@ def test_empty_input_returns_empty_report():
     assert report.total_closed_lots == 0
     assert report.total_wins == 0
     assert report.win_rate == 0.0
+
+
+def _entry(intent_id, channel="stp", ticker="NVDA", itype="equity",
+           fill_price=100.0, fill_qty=10):
+    return {"intent_id": intent_id, "channel": channel, "ticker": ticker,
+            "instrument_type": itype, "fill_price": fill_price, "fill_qty": fill_qty}
+
+
+def _sell(intent_id, sold_qty=10, sold_avg_price=110.0):
+    return {"intent_id": intent_id, "sold_qty": sold_qty,
+            "sold_avg_price": sold_avg_price}
+
+
+def test_full_close_gain():
+    # bought 10 @ 100, sold 10 @ 110 -> +100
+    report = compute_attribution(
+        [_entry("a")], [_sell("a", 10, 110.0)], [])
+    assert len(report.sources) == 1
+    s = report.sources[0]
+    assert s.channel == "stp"
+    assert s.realized == 100.0
+    assert s.by_instrument.equity == 100.0
+    assert report.grand_total == 100.0
+
+
+def test_full_close_loss():
+    # bought 10 @ 100, sold 10 @ 90 -> -100
+    report = compute_attribution([_entry("a")], [], [_sell("a", 10, 90.0)])
+    assert report.sources[0].realized == -100.0
+
+
+def test_partial_close_uses_sold_qty_not_fill_qty():
+    # bought 10 @ 100, sold only 4 @ 110 -> +40 (not +100)
+    report = compute_attribution([_entry("a")], [_sell("a", 4, 110.0)], [])
+    assert report.sources[0].realized == 40.0
+
+
+def test_trim_and_followsell_mix_on_one_lot():
+    # bought 10 @ 100; trim 3 @ 110 (+30); follow-sell 5 @ 120 (+100) -> +130
+    report = compute_attribution(
+        [_entry("a")], [_sell("a", 3, 110.0)], [_sell("a", 5, 120.0)])
+    assert report.sources[0].realized == 130.0
+
+
+def test_option_lot_applies_100x_multiplier():
+    # synthetic: option bought 1 @ 2.00, sold 1 @ 3.00 -> (3-2)*1*100 = +100
+    e = _entry("opt", itype="option", fill_price=2.0, fill_qty=1)
+    report = compute_attribution([e], [_sell("opt", 1, 3.0)], [])
+    s = report.sources[0]
+    assert s.realized == 100.0
+    assert s.by_instrument.option == 100.0
+    assert s.by_instrument.equity == 0.0
+
+
+def test_multiple_sources_summed_and_sorted_desc():
+    a = _entry("a", channel="stp")
+    b = _entry("b", channel="mystic")
+    report = compute_attribution(
+        [a, b], [_sell("a", 10, 110.0), _sell("b", 10, 90.0)], [])
+    assert [s.channel for s in report.sources] == ["stp", "mystic"]  # +100 before -100
+    assert report.grand_total == 0.0

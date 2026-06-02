@@ -12,6 +12,7 @@ Row-shape contract (accessed by key; dict / sqlite3.Row / aiosqlite.Row all work
   exit:  intent_id, sold_qty, sold_avg_price
 """
 from __future__ import annotations
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 OPTION_MULTIPLIER = 100
@@ -65,5 +66,56 @@ class AttributionReport:
         return self.total_wins / self.total_closed_lots if self.total_closed_lots else 0.0
 
 
+def _valid_sells(rows):
+    """(sold_qty, sold_avg_price) for real sales only. Skips zero-fill
+    (sold_qty<=0) and NULL-price rows; returns sell_anomaly=True if a row had
+    sold_qty>0 but a NULL price (a real sale at an unknown price)."""
+    out, sell_anomaly = [], False
+    for r in rows:
+        q, p = r["sold_qty"], r["sold_avg_price"]
+        if q is None or q <= 0:
+            continue
+        if p is None:
+            sell_anomaly = True
+            continue
+        out.append((int(q), float(p)))
+    return out, sell_anomaly
+
+
 def compute_attribution(entries, trims, exits) -> AttributionReport:
-    return AttributionReport()
+    trims_by = defaultdict(list)
+    for t in trims:
+        trims_by[t["intent_id"]].append(t)
+    exits_by = defaultdict(list)
+    for e in exits:
+        exits_by[e["intent_id"]].append(e)
+
+    by_channel: dict[str, SourcePnl] = {}
+
+    def src(ch: str) -> SourcePnl:
+        if ch not in by_channel:
+            by_channel[ch] = SourcePnl(channel=ch)
+        return by_channel[ch]
+
+    for entry in entries:
+        iid = entry["intent_id"]
+        channel = entry["channel"] or "(unknown)"
+        itype = entry["instrument_type"]
+        fill_price = entry["fill_price"]
+        sells, _sell_anomaly = _valid_sells(trims_by.get(iid, []) + exits_by.get(iid, []))
+
+        sold_total = sum(q for q, _ in sells)
+        proceeds = sum(q * p for q, p in sells)
+        mult = OPTION_MULTIPLIER if itype == "option" else 1
+        realized = (proceeds - sold_total * (fill_price or 0.0)) * mult
+
+        s = src(channel)
+        s.realized += realized
+        if itype == "option":
+            s.by_instrument.option += realized
+        else:
+            s.by_instrument.equity += realized
+
+    sources = sorted(by_channel.values(), key=lambda s: s.realized, reverse=True)
+    grand = sum(s.realized for s in sources)
+    return AttributionReport(sources=sources, grand_total=grand)
