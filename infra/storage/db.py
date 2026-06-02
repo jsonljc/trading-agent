@@ -212,6 +212,10 @@ async def get_connection(db_path: str) -> aiosqlite.Connection:
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA synchronous=NORMAL")
     await conn.execute("PRAGMA foreign_keys=ON")
+    # Explicit + extra headroom over the sqlite connect() default of 5000ms, so a
+    # second connection (audit/promote script) during a live trade retries
+    # rather than erroring instantly with "database is locked".
+    await conn.execute("PRAGMA busy_timeout=10000")
     await conn.executescript(SCHEMA)
     await _migrate(conn)
     await conn.commit()

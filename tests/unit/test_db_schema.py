@@ -26,3 +26,18 @@ async def test_schema_creates_idx_classification_log_trader_time():
         )
         row = await cursor.fetchone()
     assert row is not None, "index idx_classification_log_trader_time must exist after SCHEMA is applied"
+
+
+@pytest.mark.asyncio
+async def test_busy_timeout_is_set_explicitly(tmp_path):
+    # Python's sqlite connect() defaults busy_timeout to 5000ms; we set it
+    # explicitly to 10000ms for extra headroom when a second connection (an
+    # audit/promote script) touches agent.db during a live trade.
+    from infra.storage.db import get_connection
+    conn = await get_connection(str(tmp_path / "t.db"))
+    try:
+        async with conn.execute("PRAGMA busy_timeout") as cur:
+            row = await cur.fetchone()
+        assert row[0] == 10000
+    finally:
+        await conn.close()
