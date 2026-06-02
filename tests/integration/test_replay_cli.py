@@ -109,6 +109,56 @@ def test_cli_missing_db_exits_2(tmp_path, capsys):
     assert rc == 2
 
 
+def test_divergence_baseline_uses_latest_classification_row(tmp_path, capsys):
+    """Two classification rows for the same event_id: an older bucket=LOW and a
+    newer bucket=HIGH. The newer row must be the divergence baseline (the replay
+    classifies the entry as HIGH, so HIGH baseline => NO divergence; a LOW
+    baseline would wrongly diverge). This locks in the ORDER BY created_at, id
+    determinism fix."""
+    import asyncio
+
+    async def _seed_dup(db_path):
+        conn = await get_connection(str(db_path))
+        sig = SignalStore(conn)
+        cl = ClassificationLogStore(conn)
+        await sig.insert({
+            "id": "evt-entry", "source": "discord", "channel": "stocktalkweekly",
+            "author": "Stock Talk Weekly", "trigger_preview": ENTRY_MSG,
+            "full_message_text": ENTRY_MSG, "capture_mode": "extension",
+            "message_fingerprint": "fp1", "received_at": "2026-05-15T14:30:00+00:00",
+        })
+        # Older row: bucket LOW. Newer row: bucket HIGH. created_at is set by the
+        # store at insert time, so insertion order == chronological order.
+        await cl.insert(event_id="evt-entry", trader_handle="stocktalkweekly",
+                        msg_text=ENTRY_MSG, features={}, llm_response=ENTRY_LLM,
+                        bucket="LOW", confidence=0.5, size_pct=0.01,
+                        size_source="bucket_low", action_taken="fired",
+                        reason="older", ticker="NVDA", side="long")
+        await cl.insert(event_id="evt-entry", trader_handle="stocktalkweekly",
+                        msg_text=ENTRY_MSG, features={}, llm_response=ENTRY_LLM,
+                        bucket="HIGH", confidence=0.95, size_pct=0.05,
+                        size_source="bucket_high", action_taken="fired",
+                        reason="newer", ticker="NVDA", side="long")
+        await conn.commit()
+        await conn.close()
+
+    db_path = tmp_path / "live.db"
+    asyncio.run(_seed_dup(db_path))
+    cli = _load_cli()
+    rc = cli.main([
+        "--db", str(db_path),
+        "--policy", str(REPO_ROOT / "config" / "policy.yaml"),
+        "--event-id", "evt-entry", "--json",
+    ])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    res = payload["results"][0]
+    assert res["bucket"] == "HIGH"
+    # Newer (HIGH) row is the baseline => matches replayed HIGH => no divergence.
+    assert res["divergence"] is None
+    assert payload["summary"]["divergences"] == 0
+
+
 def test_cli_event_id_filter(tmp_path, capsys):
     import asyncio
     db_path = tmp_path / "live.db"

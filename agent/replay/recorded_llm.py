@@ -7,22 +7,33 @@ classification_log.llm_response_json). On a miss it returns a safe SKIP default
 and counts the miss. Zero API calls — fully deterministic.
 """
 from __future__ import annotations
+import re
 
 
 _SKIP_DEFAULT = {"is_entry": False, "bucket": "SKIP", "confidence": 0.0}
 
 
+def _normalize(text: str) -> str:
+    """Whitespace-collapse mirroring MessageNormalizer / compute_fingerprint, so
+    a non-normalized stored key still matches the normalized lookup text."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
 class RecordedClassifierClient:
     def __init__(self, responses_by_text: dict[str, dict]) -> None:
-        self._responses = dict(responses_by_text or {})
+        # Normalize keys on store so a non-normalized recorded key still matches
+        # the normalized text the classifier is queried with.
+        self._responses = {
+            _normalize(k): v for k, v in (responses_by_text or {}).items()
+        }
         self.hits = 0
         self.misses = 0
 
     def was_recorded(self, text: str) -> bool:
-        return text in self._responses
+        return _normalize(text) in self._responses
 
     async def classify(self, *, system: list, model: str, messages: list) -> dict:
-        text = self._user_text(messages)
+        text = _normalize(self._user_text(messages))
         if text in self._responses:
             self.hits += 1
             return self._responses[text]

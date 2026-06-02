@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -38,6 +39,13 @@ import aiosqlite
 from agent.policy import load_policy
 from agent.replay.recorded_llm import RecordedClassifierClient
 from agent.replay.runner import replay_all
+
+
+def _normalize(text: str) -> str:
+    """Whitespace-collapse mirroring MessageNormalizer / compute_fingerprint, so
+    recorded msg_text keys match the normalized full_message_text the classifier
+    is actually queried with."""
+    return re.sub(r"\s+", " ", text or "").strip()
 
 
 async def _load(db_path, *, channel=None, limit=None, event_id=None):
@@ -66,15 +74,26 @@ async def _load(db_path, *, channel=None, limit=None, event_id=None):
         # Recorded LLM responses keyed by message text (for the replay LLM), and
         # the recorded classification (bucket/action) keyed by event_id (for the
         # divergence check).
+        # ORDER BY created_at, id so the LATEST classification per event_id
+        # deterministically wins: rows iterate oldest-first, so the last write
+        # into each dict (below) is the newest row. Without this, SQLite's row
+        # order is unspecified and the divergence baseline is nondeterministic
+        # run-to-run for any event_id with multiple classification rows.
         cur = await conn.execute(
             "SELECT event_id, msg_text, llm_response_json, bucket, action_taken "
-            "FROM classification_log")
+            "FROM classification_log ORDER BY created_at, id")
         responses_by_text: dict[str, dict] = {}
         recorded_by_event: dict[str, dict] = {}
         for r in await cur.fetchall():
             if r["llm_response_json"]:
                 try:
-                    responses_by_text[r["msg_text"]] = json.loads(r["llm_response_json"])
+                    # Normalize the key with the same whitespace collapse the
+                    # MessageNormalizer applies to full_message_text before the
+                    # classifier runs, so recorded keys match the text the replay
+                    # LLM is queried with. (RecordedClassifierClient also
+                    # normalizes on lookup as a belt-and-braces safeguard.)
+                    key = _normalize(r["msg_text"])
+                    responses_by_text[key] = json.loads(r["llm_response_json"])
                 except json.JSONDecodeError:
                     pass
             recorded_by_event[r["event_id"]] = {

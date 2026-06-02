@@ -22,6 +22,7 @@ from agent.replay.capture import CapturingTraceStore
 from agent.replay.gateway import ReplayGateway
 from agent.traders.profile import load_all_profiles
 from agent.traders.registry import TraderRegistry
+from skills.signal.classification_logger import ClassificationLogger
 from infra.storage.db import SCHEMA
 from infra.storage.idempotency_store import IdempotencyStore
 from infra.storage.classification_log_store import ClassificationLogStore
@@ -80,17 +81,12 @@ def _summarize_orders(placed: list[dict]) -> list[dict]:
 
 
 def _infer_action(bucket, updates) -> str | None:
-    """Mirror ClassificationLogger._infer_action from ctx updates."""
-    size_source = updates.get("size_source")
-    if size_source == "drop_low_conf":
-        return "dropped_low_conf"
-    if size_source == "llm_error":
-        return "llm_error"
-    if size_source == "ticker_not_in_msg":
-        return "ticker_not_in_msg"
-    if bucket in (None, "SKIP"):
-        return "skipped"
-    return "fired"
+    """Delegate to the canonical ClassificationLogger._infer_action so the
+    divergence check can never silently drift from the logger that wrote the
+    recorded action_taken. That static method only calls ctx.get("size_source"),
+    so the captured `updates` dict (whose .get() is signature-compatible) works
+    directly as the ctx-like argument."""
+    return ClassificationLogger._infer_action(updates, bucket)
 
 
 async def replay_one(event_row, policy, recorded_llm, *,

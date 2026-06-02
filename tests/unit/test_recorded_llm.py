@@ -42,3 +42,25 @@ async def test_was_recorded_lookup():
     client = RecordedClassifierClient({"hello": {"bucket": "SKIP"}})
     assert client.was_recorded("hello") is True
     assert client.was_recorded("nope") is False
+
+
+@pytest.mark.asyncio
+async def test_lookup_hits_after_whitespace_normalization():
+    """A recorded key with collapsible whitespace (double spaces + a newline)
+    must still HIT when the lookup text is the normalized form — both sides are
+    whitespace-collapsed the same way MessageNormalizer does."""
+    recorded = {
+        "buy  AAPL\nhere, core  position": {
+            "is_entry": True, "ticker": "AAPL", "bucket": "HIGH",
+        }
+    }
+    client = RecordedClassifierClient(recorded)
+    out = await client.classify(
+        system=[], model="m",
+        messages=_messages("buy AAPL here, core position"),
+    )
+    assert out["bucket"] == "HIGH"
+    assert client.hits == 1
+    assert client.misses == 0
+    # was_recorded normalizes too.
+    assert client.was_recorded("buy AAPL here, core position") is True

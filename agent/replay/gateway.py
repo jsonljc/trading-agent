@@ -8,7 +8,7 @@ gracefully no-ops), and orders are recorded into `placed_orders` then "filled"
 deterministically at the order's limit (or the quote for MKT).
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from infra.ib.models import (
@@ -31,6 +31,9 @@ class ReplayGateway:
         self,
         *,
         quote: float = 100.0,
+        # Per-ticker quote overrides. The harness path (runner.py) never passes
+        # this — it uses the single `quote` — but it's kept as a tested,
+        # intentional extension point for per-ticker replay scenarios.
         quotes: dict[str, float] | None = None,
         net_liq: float = 100_000.0,
     ) -> None:
