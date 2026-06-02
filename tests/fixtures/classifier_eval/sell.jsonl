@@ -1,0 +1,14 @@
+{"msg": "closed $RKLB here, thesis played out, done with the name", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "sold the remainder of my $CRDO into the gap up", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "out of $HOOD completely, moving on", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "exited $RDDT in full, no longer like the setup", "trader": "mystic", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "stopped out of $ALAB on the break of support", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "trimmed a third of $NBIS into the rip, still hold most of it", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "scaling out of $IOT here, took some profits but keeping a runner", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "sold half my $TMDX into strength, locking gains", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "trimmed $OSCR a bit on the pop, still believe in the longer story", "trader": "mystic", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "$AFRM sold off hard today on the short report, no news of substance though", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
+{"msg": "watching $NET into the print, might add if it holds the 50-week", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
+{"msg": "the market dumped into the close, $SPY $QQQ both red, ugly tape", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
+{"msg": "removing $MU from the watchlist, never got the entry I wanted", "trader": "mystic", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
+{"msg": "no position in $AVGO, just commentary on the HBM read-through", "trader": "mystic", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
