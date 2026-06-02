@@ -5,7 +5,6 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
                        trader_registry=None, classification_log_store=None,
                        llm_classifier=None) -> list:
     from skills.signal.message_normalizer import MessageNormalizer
-    from skills.signal.desktop_reader import DesktopReader
     from skills.signal.trader_router import TraderRouter
     from skills.signal.trader_classifier import TraderClassifier
     from skills.signal.classification_logger import ClassificationLogger
@@ -24,7 +23,6 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
     digest = TelegramDigest(telegram_client, mode="signal_only")
     skills_list: list[Skill] = [
         MessageNormalizer(policy),
-        DesktopReader(policy),
         TraderRouter(trader_registry),
         TraderClassifier(trader_registry, llm_classifier),
         ClassificationLogger(classification_log_store),
