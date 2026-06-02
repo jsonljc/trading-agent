@@ -1,140 +1,166 @@
-# Phase E — Sell-Following: Design & Plan
+# Phase E — Sell-Following: Design & Plan (rev. 2, post design-review)
 
 **Goal:** Follow the tracked trader's **explicit sells**. Today exit/sell messages
-classify as SKIP and are dropped — so entries fire but exits never do. This is the
-sanctioned downside (the deliberate copy-trade thesis: hold until the trader sells,
-then follow), and it completes the trade lifecycle.
+classify as SKIP and are dropped — entries fire but exits never do. This is the
+sanctioned downside (hold until the trader sells, then follow) and completes the
+trade lifecycle.
 
 **Scope (v1): shares-only.** Detect an explicit sell → match our open *shares*
 position(s) for that (channel, ticker) → submit a marketable-limit SELL for the held
 qty (full or partial) → record the exit idempotently. The **options leg is left
-held** in v1 (consistent with the existing trim ladder, which is shares-only) — a
-documented follow-up, because selling-to-close an option needs an option *bid*
-source the gateway doesn't expose yet (`get_option_ask` only) and contract
-reconstruction from the stored intent.
+held** (consistent with the trim ladder, which is shares-only) — a documented
+follow-up, because selling-to-close an option needs an option *bid* source the
+gateway doesn't expose (`get_option_ask` only) plus contract reconstruction.
 
 **Branch:** `feat/phase-e-sell-following` (off the C+D HEAD). TDD, one commit/task.
-Paper mode only. NO automated stop-loss / kill-on-P&L is added — selling is driven
-**solely** by the trader's explicit sell message.
+Paper mode only. NO automated stop-loss / kill-on-P&L — selling is driven **solely**
+by the trader's explicit sell message.
+
+> This rev incorporates an adversarial design review that caught 3 blockers
+> (event_id-keyed idempotency double-selling reposts; per-intent partial fraction
+> over-selling; a permanent-claim vs. releasable-claim contradiction) and several
+> important issues (audit mislabel, in-flight trim race, RTH, mixed messages).
 
 ---
 
-## Architecture — two new skills, self-gating (no orchestrator refactor)
+## Architecture — two self-gating skills (no orchestrator refactor)
 
-The pipeline runs one flat chain per event and halts on skip/fail; `EntrySkipGate`
-halts every SKIP. Rather than refactor into branched orchestrators, add two skills
-that fit the existing self-gating pattern (mirroring how the options sub-chain
-no-ops via `already_terminated`):
+The pipeline is ONE flat chain (`main.py`: `full_chain = phase1 + phase2b`, run by a
+single Orchestrator that halts on skip/fail). Add two skills that fit the existing
+self-gating pattern (the options sub-chain already no-ops via `already_terminated`).
 
-1. **`SellClassifier`** (phase1, after `TraderClassifier`): only runs when an **exit
-   verb** is present (cheap deterministic prefilter) AND the entry classifier
-   produced no actionable entry. LLM (fail-closed) detects the sell and extracts
-   `{ticker, scope: full|partial, fraction, confidence}`. On a confident sell it
-   sets `ctx.action="sell"` + `sell_*` keys. Otherwise no-op (entries untouched).
+**Pinned chain order** (within `build_phase1_chain`):
+`MessageNormalizer → TraderRouter → TraderClassifier → SellClassifier →
+ClassificationLogger → SameDayDedupGate → SellFollower → EntrySkipGate →
+IdempotencyCheck → TickerValidator → TelegramDigest` → (phase2b entry chain).
 
-2. **`SellFollower`** (placed right after `SellClassifier`, BEFORE `EntrySkipGate`):
-   - `action != "sell"` → `success` (pass-through; entries proceed normally).
-   - `action == "sell"` → execute the sell, then return `skip` (reason
-     `sell_followed`) to halt the entry path (a sell is not an entry). The actual
-     sell is recorded in `position_exits` + the trade audit; `on_skip` sends a sell
-     digest.
+- **`SellClassifier`** (after `TraderClassifier`, before `ClassificationLogger` so
+  the sell is logged): runs only when an **exit verb** is present AND the entry
+  classifier produced no actionable entry (`bucket` not in HIGH/LOW). LLM
+  (fail-closed) → `{is_sell, ticker, scope: full|partial, fraction, confidence}`. On
+  a confident sell sets `ctx.action="sell"` + `sell_scope`/`sell_fraction`.
+  Otherwise no-op (entries untouched). **Mixed-message policy (explicit):** if the
+  entry classifier already produced HIGH/LOW, the entry wins and the exit is
+  dropped — documented v1 behavior.
+- **`SellFollower`** (after `SameDayDedupGate`, before `EntrySkipGate`):
+  - `action != "sell"` → `success` (pass-through; entries proceed).
+  - `action == "sell"` → execute, then return `skip` with a reason. `on_skip`
+    branches on the reason to audit + alert correctly (see Audit semantics).
 
-`EntrySkipGate` is unchanged — for a real entry, `SellFollower` passes through and
-the gate behaves as today; for a sell, the chain already halted at `SellFollower`.
+`EntrySkipGate` is unchanged. For an entry, `SellFollower` passes through; for a
+sell, the chain already halted at `SellFollower` so execution never runs.
 
 ## Sell detection (SellClassifier)
 
 - **Feature extractor:** add `_EXIT_VERBS` (sold, sold out, out of, closed, close,
-  trimmed/trimming, taking profits, scaling out, exiting, dumped, cut, took profits,
-  stopped out) → `Features.exit_verb_present: bool`.
-- **LLM contract:** `{is_sell: bool, ticker: SYMBOL|null, scope: "full"|"partial",
-  fraction: 0.0-1.0|null, confidence: 0.0-1.0, reason: str}`. Per-trader optional
-  `sell_examples` on the profile (new field, defaults empty) teach it.
+  trimmed/trimming, taking/took profits, scaling out, exiting, dumped, cut, stopped
+  out) → `Features.exit_verb_present: bool`. Entry-verb extraction unaffected.
+- **LLM contract:** `{is_sell, ticker, scope, fraction, confidence, reason}`. New
+  optional per-trader `sell_examples` profile field (defaults empty).
 - **Fail-closed gates:** require `exit_verb_present`, `is_sell`, ticker present in
-  message (anti-hallucination, same as entries), `confidence >= 0.70`. Partial with
-  no parseable fraction → default 0.5.
+  the message (anti-hallucination), `confidence >= 0.70`. `partial` with no
+  parseable fraction → default 0.5.
 
-## Position matching + remaining quantity
+## Idempotency — fingerprint-keyed, RTH-gated, no release
 
-- **`get_open_shares_positions(channel, ticker)`** on `TradeIntentStore`: filled,
-  equity, `execution_state='filled'`, this (channel, ticker). (Channel-scoped so a
-  trader's sell only closes that trader's position.)
-- **Remaining qty** = `fill_qty − Σ(trim_ladder sold_qty) − Σ(position_exits
-  sold_qty)`. Helper `remaining_qty(intent_id)` joins the two sell sources. A
-  position with remaining ≤ 0 is already closed → skipped (this is also what makes a
-  reworded re-post of a *full* exit a no-op).
+The review showed event_id-keyed claims double-sell reposts (new event_id, same
+content) and that "permanent UNIQUE claim" can't be "released for retry". Resolution:
 
-## position_exits table + idempotency
+- **Key on the message fingerprint** (`ctx.message_fingerprint`,
+  content-based, stable across reposts/edits) — NOT event_id.
+- **RTH gate first:** outside Regular Trading Hours → `skip` (`sell_outside_rth`) +
+  operator alert, **without claiming**. RTH marketable-limit sells fill reliably, so
+  we never need the releasable-claim/retry machinery; a repost during RTH is then
+  free to proceed.
+- **`claim_sell_event(fingerprint, event_id)`**: `INSERT OR IGNORE` into
+  `sell_event_claims(fingerprint PK, event_id, claimed_at)`, returns `rowcount>0`.
+  Permanent, atomic, dedups concurrent/redelivered/reposted sells. A rare RTH
+  zero-fill is **not** auto-retried — it's alerted for manual handling (matches the
+  deliberate no-auto-anything-risky philosophy).
+
+## Position matching, aggregate fraction, remaining qty
+
+- **`get_open_shares_positions(channel, ticker)`**: `execution_state='filled'`,
+  `instrument_type='equity'` (verified against `TradeIntentWriter`'s stored literal
+  by a test), this (channel, ticker), oldest-first. Channel-scoped so a trader's
+  sell only closes that trader's position.
+- **`remaining_qty(intent_id)`** = `fill_qty − Σ(trim qty) − Σ(position_exits
+  sold_qty)`, where trim qty counts **recorded** rungs' `sold_qty` AND **reserves**
+  in-flight claimed-but-unrecorded rungs (`fire_started_at` set, `fired_at` NULL) at
+  `round_half_up_min1(fill_qty × trim_pct)`. Reserving in-flight trims closes the
+  trim/sell race the review flagged (worst case otherwise: one rung double-sold).
+- **Aggregate fraction (fixes per-intent over-sell):** compute `agg_remaining = Σ
+  remaining_qty` across matched intents. Target = `agg_remaining` (full) or
+  `floor(agg_remaining × fraction)` min 1 (partial). Allocate the target across
+  intents oldest-first (`min(remaining_i, target_left)`), one SELL order per intent.
+
+## position_exits ledger
 
 ```sql
 CREATE TABLE position_exits (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  intent_id        TEXT NOT NULL,     -- shares intent being sold
-  exit_event_id    TEXT NOT NULL,     -- the sell message event_id
-  scope            TEXT NOT NULL,     -- 'full' | 'partial'
+  fingerprint      TEXT NOT NULL,    -- sell-event content hash (idempotency)
+  event_id         TEXT,             -- triggering message (trace)
+  intent_id        TEXT NOT NULL,    -- shares intent sold
+  channel          TEXT, ticker TEXT,
+  scope            TEXT,             -- 'full' | 'partial'
   requested_qty    INTEGER,
-  claimed_at       TEXT,
-  sold_at          TEXT,
   sold_qty         INTEGER,
   sold_avg_price   REAL,
   broker_order_ref TEXT,
   reason           TEXT,
-  UNIQUE(intent_id, exit_event_id)
+  created_at       TEXT NOT NULL
 );
 ```
-(New table in SCHEMA **and** an idempotent `_migrate()` `CREATE TABLE IF NOT EXISTS`,
-per the db.py convention.) **Idempotency:** `claim_exit(intent_id, exit_event_id)` =
-`INSERT OR IGNORE` returning `rowcount>0` — the same sell message can't double-fire
-on one position (concurrent or re-delivered). The remaining-qty guard handles
-reworded full-exit reposts (remaining hits 0). Mirrors the trim ladder's
-claim-before-order discipline.
+Plus `sell_event_claims(fingerprint TEXT PRIMARY KEY, event_id TEXT, claimed_at TEXT
+NOT NULL)`. Both go in `SCHEMA` **and** idempotent `_migrate()` `CREATE TABLE IF NOT
+EXISTS` (db.py convention).
 
-## Sell execution (module helper, mirrors fire_rung_if_crossed)
+## Sell execution (module helper `follow_sell_position`, mirrors fire_rung_if_crossed)
 
-`follow_sell_position(gw, exits_store, intent_id, ticker, qty, exit_event_id, scope,
-cap)`:
-1. `claim_exit(...)` → bail if already claimed.
-2. `qualify_equity(ticker)`; `price = get_quote(ticker)`;
-   `limit = marketable_sell_limit(price, cap)`.
-3. `PreparedOrder(action="SELL", qty, "LMT", limit, "DAY")`;
-   `client_order_id = f"{intent_id}:exit:{exit_event_id}"`.
-4. `place_order` → `wait_fill`. Broker-unavailable → release claim, ret/ fail.
-   filled_qty==0 → cancel residual + release claim (retry-able) → fail.
-   partial → cancel residual, record real sold_qty. filled → record.
-5. `record_exit(...)` with sold_qty/avg/broker_ref. Reuses the C+D partial-fill
-   discipline (cancel residual, never mask a fill).
+Per allocated intent: `qualify_equity(ticker)`; `price = get_quote(ticker)`;
+`limit = marketable_sell_limit(price, cap)`; `PreparedOrder(action="SELL", qty,
+"LMT", limit, "DAY")`; `client_order_id = f"{intent_id}:exit:{fingerprint[:8]}"`;
+`place_order` → `wait_fill`. Reuses the C+D partial-fill discipline: broker-down →
+fail; `filled_qty==0` → cancel residual; partial → cancel residual + record real
+`sold_qty`; record one `position_exits` row with the actual sold qty. Inline
+`wait_fill` blocks the handler up to `fill_timeout` — same as the existing entry
+submitters (the deferred concurrency item covers both).
 
-For **full** scope, qty = remaining; for **partial**, qty = `floor(remaining ×
-fraction)` (min 1 if remaining ≥ 1). When multiple open intents match a (channel,
-ticker), apply to each oldest-first.
+## Audit semantics + wiring (fixes the "skipped" mislabel)
 
-## Wiring
+`SellFollower` returns `skip` with a precise reason. `main.py on_skip` branches:
+- `sell_followed` → `audit_writer.write(ctx, "sell_followed")` (NOT "skipped", so P&L
+  analytics aren't corrupted) + `digest.send_sell_digest(ctx)`.
+- `no_open_position` / `sell_outside_rth` / `sell_already_followed` →
+  `audit_writer.write(ctx, "skipped")` + a one-line informational alert.
+- `TelegramDigest.send_sell_digest(ctx)`: "✅ FOLLOWED SELL — {ticker} sold {qty} @
+  {px} ({scope})".
 
-- `agent/registry.py`: add `SellClassifier` + `SellFollower` to `build_phase1_chain`
-  (after `TraderClassifier`, before `EntrySkipGate`). Both need the gateway, intent
-  store, exits store, llm, trader registry, slippage cap.
-- `main.py`: construct the exits store; pass deps; `on_skip` sends a **sell digest**
-  when reason == `sell_followed`.
-- `TelegramDigest.send_sell_digest(ctx)`: "FOLLOWED SELL — {ticker} sold {qty} @ {px}".
+Registry/main wiring: construct the exits + claim store, thread gateway / intent
+store / llm / trader registry / `shares_slippage_cap_pct` into the two skills.
 
 ## Test surface (TDD)
-- feature extractor: exit verbs detected; entry verbs unaffected.
-- SellClassifier: exit verb + LLM is_sell → action='sell' + scope/fraction; no exit
-  verb → no-op; low confidence / ticker-not-in-msg → no-op (fail-closed); an entry
-  message → untouched.
-- store: `get_open_shares_positions`, `remaining_qty` (nets trims + exits),
-  `claim_exit` idempotency, `record_exit`.
-- follow_sell_position: full sell of remaining; partial = floor(remaining×fraction);
-  partial-fill cancels residual + records real qty; zero-fill releases claim;
-  double-claim no-op; already-closed (remaining 0) no-op.
-- SellFollower: action='sell' executes + returns skip(sell_followed); entry passes
-  through; no matching position → skip with a distinct reason.
-- migration: position_exits created on a legacy DB.
-- e2e: filled shares intent → sell message → position sold, exit recorded, entry
-  chain not run.
+- feature extractor: exit verbs detected; entry verbs unaffected; mixed → both flags.
+- SellClassifier: exit verb + is_sell → action='sell' + scope/fraction; no exit verb
+  → no-op; low conf / ticker-not-in-msg → no-op; entry (HIGH/LOW) message → untouched
+  (mixed-message: entry wins).
+- store: `get_open_shares_positions` (channel+ticker+filled+equity literal),
+  `remaining_qty` (nets recorded trims + exits AND reserves in-flight trims),
+  `claim_sell_event` idempotency (repost same fingerprint → second claim False),
+  `record_exit`.
+- `follow_sell_position`: full = remaining; partial = floor(agg×fraction) allocated
+  oldest-first; partial-fill cancels residual + records real qty; zero-fill cancels
+  residual; double-claim no-op; remaining 0 → no-op.
+- SellFollower: action='sell' RTH → executes + skip('sell_followed'); outside RTH →
+  skip('sell_outside_rth') no claim; entry → pass-through; no position →
+  skip('no_open_position'); reposted fingerprint → skip('sell_already_followed').
+- migration: both new tables created on a legacy DB.
+- e2e: filled shares intent → sell message (RTH) → position sold, exit recorded,
+  entry chain not run, audit status='sell_followed'.
 
 ## Deferred (documented)
-- **Options-leg sell-to-close** (needs `get_option_bid` + contract reconstruct).
-- Multi-account / FIFO tax lots, reworded-partial double-trim (logged, not blocked).
-- Other Phase E items (P&L attribution, replay harness, classifier eval,
-  active-learning, economic guards) — separate specs.
+- Options-leg sell-to-close (needs `get_option_bid` + contract reconstruct).
+- RTH zero-fill auto-retry (alert-only in v1); reworded-partial edge cases.
+- Other Phase E items (P&L attribution, replay, classifier eval, active-learning,
+  economic guards) — separate specs.
