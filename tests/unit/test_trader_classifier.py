@@ -6,7 +6,7 @@ from agent.traders.registry import TraderRegistry
 from skills.signal.trader_classifier import TraderClassifier
 
 
-def make_profile(handle="wse", auto=True, size_in_msg=True) -> TraderProfile:
+def make_profile(handle="wse", auto=True, size_in_msg=True, size_floor=None) -> TraderProfile:
     return TraderProfile(
         handle=handle, display_name="Wall St Engine",
         discord_author_pattern="Wall St Engine",
@@ -20,6 +20,7 @@ def make_profile(handle="wse", auto=True, size_in_msg=True) -> TraderProfile:
             ConvictionExample(msg="upsizing core ENS aggressively", bucket="HIGH", why="upsize core"),
             ConvictionExample(msg="watching TEST closely", bucket="SKIP", why="no entry"),
         ),
+        size_floor=size_floor,
     )
 
 
@@ -210,3 +211,71 @@ async def test_llm_returns_ticker_not_in_message_skips():
     assert result.status == "success"
     assert ctx.get("bucket") == "SKIP"
     assert ctx.get("size_source") == "ticker_not_in_msg"
+
+
+@pytest.mark.asyncio
+async def test_stw_size_floor_shortcut_forces_high():
+    profile = make_profile(handle="stocktalkweekly", size_floor="HIGH")
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": True, "ticker": "SEI", "side": "long",
+                   "bucket": "LOW", "confidence": 0.5, "reason": "unused"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Stock Talk Weekly", "trader_handle": "stocktalkweekly",
+        "full_message_text": "OPENING $SEI with a small 1% pos",
+    })
+    result = await classifier.run(ctx)
+    assert result.status == "success"
+    assert ctx.get("bucket") == "HIGH"          # 1% would be LOW without the floor
+    assert ctx.get("size_source") == "shortcut_stated"
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_stw_size_floor_llm_path_forces_high():
+    profile = make_profile(handle="stocktalkweekly", size_in_msg=False, size_floor="HIGH")
+    registry = TraderRegistry([profile])
+    # 0.65 confidence would normally downgrade HIGH->LOW; no entry verb so the
+    # shortcut does not fire and we exercise the LLM path.
+    llm = FakeLLM({"is_entry": True, "ticker": "ADEA", "side": "long",
+                   "bucket": "HIGH", "confidence": 0.65, "reason": "thesis"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Stock Talk Weekly", "trader_handle": "stocktalkweekly",
+        "full_message_text": "ADEIA $ADEA multi-pillar thesis, a 2% position",
+    })
+    result = await classifier.run(ctx)
+    assert ctx.get("bucket") == "HIGH"
+    assert ctx.get("size_source") == "size_floor"
+
+
+@pytest.mark.asyncio
+async def test_stw_size_floor_does_not_rescue_low_confidence_skip():
+    profile = make_profile(handle="stocktalkweekly", size_in_msg=False, size_floor="HIGH")
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": True, "ticker": "SEI", "side": "long",
+                   "bucket": "LOW", "confidence": 0.3, "reason": "ambiguous"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Stock Talk Weekly", "trader_handle": "stocktalkweekly",
+        "full_message_text": "maybe SEI here",
+    })
+    result = await classifier.run(ctx)
+    assert ctx.get("bucket") == "SKIP"          # floor must not override the SKIP guard
+    assert ctx.get("size_source") == "drop_low_conf"
+
+
+@pytest.mark.asyncio
+async def test_wse_small_size_override_unaffected_without_floor():
+    profile = make_profile(handle="wse", size_in_msg=False, size_floor=None)
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": True, "ticker": "AUDC", "side": "long",
+                   "bucket": "HIGH", "confidence": 0.9, "reason": "thesis"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Wall St Engine", "trader_handle": "wse",
+        "full_message_text": "AUDC 2% weighting compelling setup",  # no entry verb
+    })
+    result = await classifier.run(ctx)
+    assert ctx.get("bucket") == "LOW"
+    assert ctx.get("size_source") == "wse_small_size_override"

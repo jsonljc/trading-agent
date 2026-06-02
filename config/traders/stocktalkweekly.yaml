@@ -7,6 +7,7 @@ bot_authors_to_skip: []
 auto_execute: true
 size_in_message: true
 prefer_message_size: true
+size_floor: HIGH
 classifier_model: claude-haiku-4-5
 availability_phrases: ["off the grid", "passover", "on vacation"]
 conviction_examples:

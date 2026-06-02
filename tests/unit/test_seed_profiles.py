@@ -21,3 +21,9 @@ def test_each_seed_profile_has_at_least_three_examples_with_valid_buckets():
         assert len(p.conviction_examples) >= 3, f"{p.handle} has too few examples"
         for ex in p.conviction_examples:
             assert ex.bucket in VALID_BUCKETS
+
+
+def test_stocktalkweekly_has_high_size_floor():
+    profiles = load_all_profiles(TRADERS_DIR)
+    stw = next(p for p in profiles if p.handle == "stocktalkweekly")
+    assert stw.size_floor == "HIGH"

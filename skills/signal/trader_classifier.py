@@ -69,6 +69,8 @@ class TraderClassifier(Skill):
             and len(features.tickers_in_msg) == 1
         ):
             bucket = "HIGH" if features.stated_size_pct >= SMALL_SIZE_THRESHOLD else "LOW"
+            if profile.size_floor == "HIGH":
+                bucket = "HIGH"
             updates = {
                 "ticker": features.tickers_in_msg[0],
                 "side": "long",
@@ -172,6 +174,14 @@ class TraderClassifier(Skill):
                 and final_bucket == "HIGH"):
             final_bucket = "LOW"
             size_source = "wse_small_size_override"
+
+        # Per-trader size floor: a trader can be configured so every actionable
+        # entry is HIGH conviction regardless of stated size or the confidence
+        # downgrade (e.g. STW, where the stated % is documented as informational).
+        # Only lifts LOW->HIGH; the SKIP guards above already returned.
+        if profile.size_floor == "HIGH" and final_bucket == "LOW":
+            final_bucket = "HIGH"
+            size_source = "size_floor"
 
         updates = {
             "ticker": ticker, "side": side,
