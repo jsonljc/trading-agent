@@ -111,8 +111,10 @@ class ExecutionPolicy(BaseModel):
     options_chase_threshold_pct: float = 0.10
     # Marketable-limit slippage caps: limit = live_ask * (1 + cap). Options
     # spreads are wide, so the options cap is looser than the shares cap.
-    options_slippage_cap_pct: float = 0.05
-    shares_slippage_cap_pct: float = 0.01
+    # Bounded to [0, 0.5): a misconfigured cap >= 1 would yield a non-positive
+    # sell limit / runaway buy limit.
+    options_slippage_cap_pct: float = Field(default=0.05, ge=0.0, lt=0.5)
+    shares_slippage_cap_pct: float = Field(default=0.01, ge=0.0, lt=0.5)
     exit_poll_interval_seconds: int = 2
     trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
         TrimRung(threshold_pct=0.05, trim_pct=0.40),

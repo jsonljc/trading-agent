@@ -51,15 +51,39 @@ async def fire_rung_if_crossed(
         await trim_store.release_claim(intent_id, rung)
         return False
 
+    if fill.filled_qty <= 0:
+        # Nothing sold (limit didn't fill / rejected): cancel any residual and
+        # release the rung so a later tick can retry — do NOT consume it.
+        await _cancel_trim_residual(gw, trade, fill)
+        await trim_store.release_claim(intent_id, rung)
+        return False
+
+    if fill.status != FillStatus.FILLED:
+        # Partial: cancel the residual working sell order, record what sold.
+        await _cancel_trim_residual(gw, trade, fill)
+        logger.warning("trim partial fill %s: %d/%d sold, residual cancelled",
+                       client_order_id, fill.filled_qty, trim_qty)
+
     await trim_store.record_fire(
         intent_id=intent_id, rung=rung,
         fired_at=datetime.now(timezone.utc).isoformat(),
         fire_price=current_price,
-        sold_qty=fill.filled_qty if fill.status == FillStatus.FILLED else 0,
+        sold_qty=fill.filled_qty,
         sold_avg_price=fill.avg_fill_price,
         broker_order_ref=fill.broker_order_id,
     )
     return True
+
+
+async def _cancel_trim_residual(gw, trade, fill) -> None:
+    """Best-effort cancel of a trim sell's remainder. Never raise — a failed
+    cancel must not mask a recorded fill."""
+    if fill.status == FillStatus.FILLED:
+        return
+    try:
+        await gw.cancel_order(trade)
+    except Exception:
+        logger.exception("trim residual cancel failed (order may rest at IB)")
 
 
 def _in_rth(now_eastern: datetime) -> bool:

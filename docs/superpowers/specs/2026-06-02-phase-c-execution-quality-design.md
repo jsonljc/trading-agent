@@ -43,9 +43,13 @@ sizing ask (the options `OrderSizer` now stashes `option_ask` in ctx) → if nei
 is > 0, fail/partial the leg (can't price a limit). `place_order`'s existing `LMT`
 branch is reached unchanged.
 
-*Known limitation:* limits round to the penny (correct for penny-pilot options). A
-non-penny-increment contract could draw an IB price rejection — handled by Phase D
-rejection handling. Adaptive algo intentionally deferred.
+*Known limitations:* (1) limits round to the penny (correct for penny-pilot
+options); a non-penny-increment contract could draw an IB price rejection —
+handled by Phase D rejection handling. (2) The shares limit uses
+`get_quote` (ask → last → close); if the ask is unavailable and it falls back to
+`last`/`close` below the true ask, the limit may be sub-marketable and not fill —
+but that degrades to a *non-fill* (residual cancelled, leg fails), never a bad
+fill, so it is acceptable. Adaptive algo intentionally deferred.
 
 ## Stream 2 — Liquidity gate (MID spread + OI/volume, fail-open)
 
