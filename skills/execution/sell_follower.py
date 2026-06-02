@@ -33,7 +33,7 @@ async def follow_sell_position(
     limit = marketable_sell_limit(price, slippage_cap_pct)
     order = PreparedOrder(action="SELL", quantity=qty, order_type="LMT",
                           limit_price=limit, tif="DAY")
-    client_order_id = f"{intent_id}:exit:{fingerprint[:8]}"
+    client_order_id = f"{intent_id}:exit:{fingerprint[:16]}"
     trade = await gw.place_order(contract, order, client_order_id)
     fill = await gw.wait_fill(trade, timeout=fill_timeout)
 
@@ -130,6 +130,12 @@ class SellFollower(Skill):
                                reason=f"sell_partial_broker_unavailable:{exc}")
 
         ctx.update({"sell_total_sold_qty": total_sold, "sell_ticker": ticker})
+        if total_sold == 0:
+            # Every lot zero-filled in RTH (limit didn't fill). Do NOT report
+            # success — alert for manual handling (claim stays; no auto-retry).
+            logger.warning("SellFollower: %s zero-fill, nothing sold", ticker)
+            return SkillResult(status="skip", reason="sell_zero_fill",
+                               updates={"sell_total_sold_qty": 0})
         logger.info("SellFollower: %s sold %d shares (%s)", ticker, total_sold, scope)
         return SkillResult(status="skip", reason="sell_followed",
                            updates={"sell_total_sold_qty": total_sold})

@@ -207,6 +207,9 @@ async def test_zero_fill_cancels_residual_and_records_zero(db):
         last_status="Submitted", status_timestamp=_now()))
     result = await _follower(gw, db).run(_ctx())
     assert result.status == "skip"
+    # A zero-fill must NOT report success ('sell_followed') — it's a missed sell
+    # that needs an operator alert, not a green digest.
+    assert result.reason == "sell_zero_fill"
     gw.cancel_order.assert_awaited_once()
     # Nothing sold -> still fully held.
     assert await PositionExitStore(db).remaining_qty("e1:AAPL:long") == 100

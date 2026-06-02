@@ -163,8 +163,9 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
             await digest_skill.send_sell_digest(ctx)
             return
         await audit_writer.write(ctx, "skipped")
-        # Informational alerts for sell outcomes that did NOT execute.
-        if reason in ("no_open_position", "sell_outside_rth") or \
+        # Informational alerts for sell outcomes that did NOT (fully) execute.
+        if reason in ("no_open_position", "sell_outside_rth", "sell_zero_fill",
+                      "sell_already_followed") or \
                 reason.startswith(("sell_broker_unavailable", "sell_partial_broker")):
             await digest_skill.send_missed_signal_alert(
                 ctx, f"sell not executed: {reason}")

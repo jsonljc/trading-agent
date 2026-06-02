@@ -121,8 +121,10 @@ class TelegramDigest(Skill):
 
     async def send_sell_digest(self, ctx: Context) -> None:
         import html
-        ticker = html.escape(ctx.get("sell_ticker") or ctx.get("ticker") or "?")
         qty = ctx.get("sell_total_sold_qty")
+        if not qty:
+            return  # nothing actually sold -> no success digest (alerted elsewhere)
+        ticker = html.escape(ctx.get("sell_ticker") or ctx.get("ticker") or "?")
         scope = html.escape(ctx.get("sell_scope") or "?")
         trader = html.escape(ctx.get("trader_handle") or ctx.get("channel") or "?")
         text = (
