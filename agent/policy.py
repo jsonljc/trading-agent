@@ -117,6 +117,9 @@ class ExecutionPolicy(BaseModel):
     shares_slippage_cap_pct: float = Field(default=0.01, ge=0.0, lt=0.5)
     # Operator emergency stop: `touch` this file to halt NEW entries instantly.
     kill_switch_file: str = "data/KILL"
+    # External dead-man's-switch (healthchecks.io-style). None = disabled.
+    heartbeat_url: str | None = None
+    heartbeat_interval_seconds: int = 60
     exit_poll_interval_seconds: int = 2
     trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
         TrimRung(threshold_pct=0.05, trim_pct=0.40),

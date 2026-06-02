@@ -223,6 +223,12 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         except Exception:
             logger.exception("failed to send bridge parse-error alert")
 
+    from agent.heartbeat import Heartbeat
+    heartbeat = Heartbeat(
+        policy.execution.heartbeat_url,
+        interval_seconds=policy.execution.heartbeat_interval_seconds,
+    )
+
     reader = SocketReader(
         socket_path,
         deadletter_path="logs/bridge_deadletter.jsonl",
@@ -232,8 +238,10 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     try:
         reconciler.start()
         exit_ladder.start()
+        heartbeat.start()
         await reader.start(handle_event)
     finally:
+        await heartbeat.stop()
         await exit_ladder.stop()
         await reconciler.stop()
         await gateway.disconnect()
