@@ -136,3 +136,35 @@ def test_no_closed_lots_yields_zero_stats():
     assert s.avg_loss == 0.0
     assert s.best_lot == 0.0
     assert s.worst_lot == 0.0
+
+
+def test_zero_fill_exit_is_ignored():
+    # a zero-fill follow-sell (sold_qty=0, NULL price) must not close the lot
+    report = compute_attribution(
+        [_entry("a")], [],
+        [{"intent_id": "a", "sold_qty": 0, "sold_avg_price": None}])
+    s = report.sources[0]
+    assert s.realized == 0.0
+    assert s.closed_lots == 0
+    assert s.flags == []  # zero-fill is normal, not an anomaly
+
+
+def test_sell_with_null_price_is_flagged_and_excluded():
+    # sold_qty>0 but price NULL: cannot value -> exclude, flag, lot not closed
+    report = compute_attribution(
+        [_entry("a", ticker="NVDA")], [],
+        [{"intent_id": "a", "sold_qty": 5, "sold_avg_price": None}])
+    s = report.sources[0]
+    assert s.realized == 0.0
+    assert s.closed_lots == 0
+    assert any("NVDA" in f and "NULL price" in f for f in s.flags)
+
+
+def test_zero_cost_entry_with_sells_is_flagged_and_excluded():
+    # fill_price 0.0 would fabricate a phantom gain -> exclude + flag
+    e = _entry("a", ticker="AMD", fill_price=0.0, fill_qty=10)
+    report = compute_attribution([e], [_sell("a", 10, 50.0)], [])
+    s = report.sources[0]
+    assert s.realized == 0.0
+    assert s.closed_lots == 0
+    assert any("AMD" in f and "fill_price" in f for f in s.flags)

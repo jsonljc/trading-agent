@@ -108,7 +108,18 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
         itype = entry["instrument_type"]
         fill_price = entry["fill_price"]
         fill_qty = entry["fill_qty"] or 0
-        sells, _sell_anomaly = _valid_sells(trims_by.get(iid, []) + exits_by.get(iid, []))
+        sells, sell_anomaly = _valid_sells(trims_by.get(iid, []) + exits_by.get(iid, []))
+
+        s = src(channel)
+        anomalous = False
+        if sells and (fill_price is None or fill_price <= 0):
+            s.flags.append(f"{ticker}: fill_price<=0 with sells — lot excluded")
+            anomalous = True
+        if sell_anomaly:
+            s.flags.append(f"{ticker}: sell with NULL price — excluded")
+
+        if anomalous:
+            continue  # excluded from all totals/stats; no by_ticker line
 
         sold_total = sum(q for q, _ in sells)
         proceeds = sum(q * p for q, p in sells)
@@ -116,7 +127,6 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
         realized = (proceeds - sold_total * (fill_price or 0.0)) * mult
         is_closed = sold_total > 0
 
-        s = src(channel)
         s.realized += realized
         if itype == "option":
             s.by_instrument.option += realized
