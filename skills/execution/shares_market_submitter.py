@@ -45,7 +45,7 @@ class SharesMarketSubmitter(Skill):
         intent_id = ctx.get("intent_id")
         await self._intents.update_fill(
             intent_id, fill_price=fill.avg_fill_price or 0.0,
-            fill_qty=fill.filled_qty,
+            fill_qty=fill.filled_qty, broker_order_ref=fill.broker_order_id,
         )
         if self._rungs:
             await self._trims.arm(

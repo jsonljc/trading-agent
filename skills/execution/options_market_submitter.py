@@ -71,6 +71,7 @@ class OptionsMarketSubmitter(Skill):
             execution_state="filled",
             signal_received_at=ctx.get("received_at",
                                        datetime.now(timezone.utc).isoformat()),
+            broker_order_ref=fill.broker_order_id,
         )
         return SkillResult(status="success", updates={
             "options_intent_id": options_intent_id,

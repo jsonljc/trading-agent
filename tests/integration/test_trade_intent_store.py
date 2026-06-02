@@ -91,3 +91,37 @@ async def test_get_pending_outbox(db):
     rows = await store.get_pending_outbox()
     assert len(rows) == 1
     assert rows[0]["outbox_status"] == "pending"
+
+
+async def test_update_fill_sets_filled_at_and_broker_ref(db):
+    store = TradeIntentStore(db)
+    await store.insert(_base_intent("evt9:NVDA:long"))
+    await store.update_fill(
+        "evt9:NVDA:long", fill_price=12.5, fill_qty=10,
+        broker_order_ref="IB-123",
+    )
+    row = await store.get("evt9:NVDA:long")
+    assert row["execution_state"] == "filled"
+    assert row["fill_price"] == pytest.approx(12.5)
+    assert row["fill_qty"] == 10
+    assert row["broker_order_ref"] == "IB-123"
+    assert row["filled_at"] is not None
+    # Cooldown revival: get_filled_since now finds the fill.
+    rows = await store.get_filled_since("NVDA", "2020-01-01T00:00:00+00:00")
+    assert len(rows) == 1
+
+
+async def test_write_records_filled_at_and_broker_ref(db):
+    store = TradeIntentStore(db)
+    now = _now()
+    await store.write(
+        intent_id="evt9:NVDA:option", event_id="evt9", channel="mystic",
+        ticker="NVDA", side="long", instrument_type="option",
+        parent_intent_id="evt9:NVDA:long", expiry="2027-01-15", strike=150.0,
+        right="C", conviction="HIGH", fill_price=3.2, fill_qty=2,
+        execution_state="filled", signal_received_at=now,
+        broker_order_ref="IB-456",
+    )
+    row = await store.get("evt9:NVDA:option")
+    assert row["broker_order_ref"] == "IB-456"
+    assert row["filled_at"] is not None
