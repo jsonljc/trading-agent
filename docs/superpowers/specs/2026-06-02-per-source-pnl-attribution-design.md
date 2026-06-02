@@ -170,6 +170,15 @@ Definitions:
   monkeypatch the send (FakeTelegramClient / `mocker.patch`), assert it is called with
   the expected summary; never hits the network.
 
+## Resolved design decisions
+
+- **`--since-sell` semantics**: a lot opened before the window still appears, with
+  realized computed on only its in-window sells. (Answers "what did this source make
+  me in period X"; a single lot's number can therefore differ between the all-time and
+  windowed views — intended.)
+- **Win-rate denominator**: a partially-sold lot counts as a closed lot, with realized
+  on the sold portion. (Reflects realized cash sooner.)
+
 ## Out of scope (YAGNI)
 
 Unrealized / mark-to-market, commissions, an options exit path, scheduled
