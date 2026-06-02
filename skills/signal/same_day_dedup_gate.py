@@ -42,7 +42,7 @@ class SameDayDedupGate(Skill):
 
         fired = await self._store.has_fired_recently(
             trader_handle=trader, ticker=ticker, side=side,
-            hours=self._window_hours,
+            hours=self._window_hours, exclude_event_id=ctx.event_id,
         )
         if not fired:
             return SkillResult(status="success")

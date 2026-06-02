@@ -27,21 +27,28 @@ class ClassificationLogStore:
         await self._conn.commit()
 
     async def has_fired_recently(self, *, trader_handle: str, ticker: str,
-                                 side: str, hours: float) -> bool:
+                                 side: str, hours: float,
+                                 exclude_event_id: str | None = None) -> bool:
         """True if a 'fired' classification for (trader, ticker, side) exists
-        within the last `hours`. Used by SameDayDedupGate to suppress
-        teaser-then-DD double-fires."""
+        within the last `hours`, EXCLUDING `exclude_event_id`.
+
+        The exclusion is essential: SameDayDedupGate runs AFTER
+        ClassificationLogger has already committed the current event's own
+        'fired' row, so without excluding it the gate would match that row and
+        suppress the very first signal (the fix/no-trades-may-8 regression)."""
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-        cursor = await self._conn.execute(
-            """SELECT 1 FROM classification_log
-               WHERE trader_handle = ?
-                 AND ticker = ?
-                 AND side = ?
-                 AND action_taken = 'fired'
-                 AND created_at >= ?
-               LIMIT 1""",
-            (trader_handle, ticker, side, cutoff),
-        )
+        sql = ["""SELECT 1 FROM classification_log
+                  WHERE trader_handle = ?
+                    AND ticker = ?
+                    AND side = ?
+                    AND action_taken = 'fired'
+                    AND created_at >= ?"""]
+        params = [trader_handle, ticker, side, cutoff]
+        if exclude_event_id is not None:
+            sql.append("AND event_id != ?")
+            params.append(exclude_event_id)
+        sql.append("LIMIT 1")
+        cursor = await self._conn.execute("\n".join(sql), params)
         return (await cursor.fetchone()) is not None
 
     async def recent_for_trader(self, trader_handle: str, *, limit: int = 100) -> list[dict]:

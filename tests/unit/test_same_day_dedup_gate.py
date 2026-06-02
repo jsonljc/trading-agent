@@ -65,7 +65,8 @@ async def test_dedup_keyed_on_side():
     """A long fire today should not block a short fire on the same ticker."""
     store = AsyncMock()
 
-    async def maybe_fired(*, trader_handle, ticker, side, hours):
+    async def maybe_fired(*, trader_handle, ticker, side, hours,
+                          exclude_event_id=None):
         return side == "long"  # only long has fired
 
     store.has_fired_recently = maybe_fired
