@@ -25,6 +25,16 @@ from agent.policy import load_policy
 from infra.telegram.client import TelegramClient
 
 
+def _safe_fetchall(conn, sql):
+    """SELECT that tolerates a not-yet-migrated DB: a missing optional table
+    (trade_intent_trims / position_exits on a legacy DB) yields no rows
+    rather than crashing the read-only report."""
+    try:
+        return conn.execute(sql).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
 def _fetch(db_path, *, channel=None, since_entry=None, since_sell=None):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -42,14 +52,16 @@ def _fetch(db_path, *, channel=None, since_entry=None, since_sell=None):
             f"fill_qty FROM trade_intents WHERE {where}", params).fetchall()
         ids = {e["intent_id"] for e in entries}
 
-        trims = [r for r in conn.execute(
+        trims = [r for r in _safe_fetchall(
+            conn,
             "SELECT intent_id, sold_qty, sold_avg_price, fired_at "
-            "FROM trade_intent_trims WHERE fired_at IS NOT NULL").fetchall()
+            "FROM trade_intent_trims WHERE fired_at IS NOT NULL")
             if r["intent_id"] in ids
             and (not since_sell or (r["fired_at"] or "") >= since_sell)]
-        exits = [r for r in conn.execute(
+        exits = [r for r in _safe_fetchall(
+            conn,
             "SELECT intent_id, sold_qty, sold_avg_price, created_at "
-            "FROM position_exits").fetchall()
+            "FROM position_exits")
             if r["intent_id"] in ids
             and (not since_sell or (r["created_at"] or "") >= since_sell)]
     finally:

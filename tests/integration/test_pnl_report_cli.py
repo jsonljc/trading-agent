@@ -94,6 +94,39 @@ def test_render_telegram_summary_is_compact_html():
     assert "<b>" in html  # uses HTML parse_mode markup
 
 
+def test_cli_tolerates_missing_sell_tables(tmp_path, capsys):
+    """A legacy DB with only trade_intents (no trade_intent_trims, no
+    position_exits) must not crash; the report renders with open/zero-realized
+    rows and exits 0."""
+    import sqlite3 as _sqlite3
+    bare_db = str(tmp_path / "bare.db")
+    conn = _sqlite3.connect(bare_db)
+    conn.execute(
+        "CREATE TABLE trade_intents ("
+        "  intent_id TEXT PRIMARY KEY,"
+        "  channel TEXT,"
+        "  ticker TEXT,"
+        "  instrument_type TEXT,"
+        "  fill_price REAL,"
+        "  fill_qty REAL,"
+        "  execution_state TEXT,"
+        "  filled_at TEXT"
+        ")"
+    )
+    conn.execute(
+        "INSERT INTO trade_intents VALUES (?,?,?,?,?,?,?,?)",
+        ("nvda1", "stp", "NVDA", "equity", 100.0, 10,
+         "filled", "2026-05-01T14:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    rc = cli.main(["--db", bare_db])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "stp" in out
+
+
 def test_telegram_flag_sends_summary(seeded_db, capsys, monkeypatch):
     sent = []
 
