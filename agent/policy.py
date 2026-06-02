@@ -68,6 +68,11 @@ class IBGatewayPolicy(BaseModel):
     client_id: int = 1
     mode: str = "paper"
     paper_account_prefixes: list[str] = ["DU"]
+    # IB market-data type: 1=live (needs a paid subscription), 2=frozen,
+    # 3=delayed (free, ~15min), 4=delayed-frozen. Default delayed: every price
+    # decision currently runs on this. Flip to 1 only after subscribing (costs
+    # money — an operator decision), so it is a config flag, not a code change.
+    market_data_type: int = 3
 
     @field_validator("mode")
     @classmethod

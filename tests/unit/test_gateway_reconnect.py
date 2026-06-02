@@ -16,6 +16,19 @@ def _paper_policy():
 
 
 @pytest.mark.asyncio
+async def test_connect_uses_configured_market_data_type():
+    policy = _paper_policy()
+    policy.ib_gateway.market_data_type = 1  # live (vs default delayed=3)
+    gw = IBGateway(policy)
+    fake_ib = MagicMock()
+    fake_ib.connectAsync = AsyncMock()
+    fake_ib.managedAccounts = MagicMock(return_value=["DU123"])
+    with patch("ib_insync.IB", return_value=fake_ib):
+        await gw.connect()
+    fake_ib.reqMarketDataType.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
 async def test_reconnect_loop_retries_past_finite_list_until_success():
     """The old code gave up after 5 attempts. Regression test: the loop must
     keep trying indefinitely (10 attempts here, well past the old give-up)."""

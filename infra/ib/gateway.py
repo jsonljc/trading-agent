@@ -80,8 +80,9 @@ class IBGateway:
         self._ib = IB()
         p = self._policy.ib_gateway
         await self._ib.connectAsync(p.host, p.port, clientId=p.client_id)
-        # Enable delayed market data (free tier fallback)
-        self._ib.reqMarketDataType(3)
+        # Market-data type from policy (default 3=delayed free tier; 1=live needs
+        # a paid subscription). Single knob so going live is config, not code.
+        self._ib.reqMarketDataType(getattr(p, "market_data_type", 3))
         accounts = self._ib.managedAccounts()
         self._account_id = accounts[0] if accounts else None
         self._connected = True
