@@ -61,6 +61,7 @@ def test_chain_has_expected_skill_order():
     )
     names = [s.name for s in chain]
     assert names == [
+        "KillSwitchGuard",
         "TradeIntentWriter",
         "ChannelPolicyGuard",
         "CooldownGuard",
@@ -93,4 +94,6 @@ def test_chain_works_without_intent_store():
     names = [s.name for s in chain]
     # No TradeIntentWriter / ChannelPolicyGuard / CooldownGuard at the start
     assert "TradeIntentWriter" not in names
-    assert names[0] == "ExecutionEligibilityGuard"
+    # KillSwitchGuard still leads (it needs no intent store).
+    assert names[0] == "KillSwitchGuard"
+    assert names[1] == "ExecutionEligibilityGuard"

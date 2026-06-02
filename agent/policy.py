@@ -115,6 +115,8 @@ class ExecutionPolicy(BaseModel):
     # sell limit / runaway buy limit.
     options_slippage_cap_pct: float = Field(default=0.05, ge=0.0, lt=0.5)
     shares_slippage_cap_pct: float = Field(default=0.01, ge=0.0, lt=0.5)
+    # Operator emergency stop: `touch` this file to halt NEW entries instantly.
+    kill_switch_file: str = "data/KILL"
     exit_poll_interval_seconds: int = 2
     trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
         TrimRung(threshold_pct=0.05, trim_pct=0.40),

@@ -43,6 +43,7 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
 def build_phase2b_execution_chain(policy, execution_store, gateway,
                                    trade_intent_store=None,
                                    trim_store=None) -> list:
+    from skills.execution.kill_switch_guard import KillSwitchGuard
     from skills.execution.trade_intent_writer import TradeIntentWriter
     from skills.execution.channel_policy_guard import ChannelPolicyGuard
     from skills.execution.cooldown_guard import CooldownGuard
@@ -70,7 +71,9 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
     rungs = [(i + 1, r.threshold_pct, r.trim_pct)
              for i, r in enumerate(policy.execution.trim_ladder.rungs)]
 
-    return intent_guards + [
+    return [
+        KillSwitchGuard(policy.execution.kill_switch_file),
+    ] + intent_guards + [
         ExecutionEligibilityGuard(policy),
         RthEntryGuard(),
         ReferencePriceCapture(gateway),

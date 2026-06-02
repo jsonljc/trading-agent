@@ -24,3 +24,4 @@ bridge/*.xcodeproj/xcuserdata/
 *.swo
 .worktrees/
 logs/
+data/KILL
