@@ -104,3 +104,35 @@ def test_closed_lots_counted_at_report_level():
     report = compute_attribution(
         [a, b], [_sell("a", 10, 110.0), _sell("b", 5, 90.0)], [])
     assert report.total_closed_lots == 2
+
+
+def test_win_rate_and_avg_win_loss_and_extremes():
+    # 3 closed lots in one source: +100, +40, -100
+    a = _entry("a", ticker="NVDA")
+    b = _entry("b", ticker="TSLA")
+    c = _entry("c", ticker="AMD")
+    report = compute_attribution(
+        [a, b, c],
+        [_sell("a", 10, 110.0), _sell("b", 4, 110.0), _sell("c", 10, 90.0)], [])
+    s = report.sources[0]
+    assert s.closed_lots == 3
+    assert s.wins == 2
+    assert s.losses == 1
+    assert s.win_rate == 2 / 3
+    assert s.avg_win == 70.0      # (100 + 40) / 2
+    assert s.avg_loss == -100.0   # (-100) / 1
+    assert s.best_lot == 100.0
+    assert s.worst_lot == -100.0
+    assert report.total_wins == 2
+    assert report.win_rate == 2 / 3
+
+
+def test_no_closed_lots_yields_zero_stats():
+    e = _entry("opt", itype="option", fill_price=2.0, fill_qty=1)  # open option
+    report = compute_attribution([e], [], [])
+    s = report.sources[0]
+    assert s.win_rate == 0.0
+    assert s.avg_win == 0.0
+    assert s.avg_loss == 0.0
+    assert s.best_lot == 0.0
+    assert s.worst_lot == 0.0

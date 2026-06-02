@@ -99,6 +99,8 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
             by_channel[ch] = SourcePnl(channel=ch)
         return by_channel[ch]
 
+    closed_realized: dict[str, list] = defaultdict(list)
+
     for entry in entries:
         iid = entry["intent_id"]
         channel = entry["channel"] or "(unknown)"
@@ -125,6 +127,11 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
         ticker_acc[key][0] += realized
         if is_closed:
             s.closed_lots += 1
+            closed_realized[channel].append(realized)
+            if realized > 0:
+                s.wins += 1
+            elif realized < 0:
+                s.losses += 1
             ticker_acc[key][1] += 1
         elif itype == "option":
             s.open_options += 1
@@ -135,8 +142,18 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
     for s in by_channel.values():
         s.by_ticker.sort(key=lambda l: l.realized, reverse=True)
 
+    for ch, s in by_channel.items():
+        cr = closed_realized[ch]
+        wins = [r for r in cr if r > 0]
+        losses = [r for r in cr if r < 0]
+        s.avg_win = sum(wins) / len(wins) if wins else 0.0
+        s.avg_loss = sum(losses) / len(losses) if losses else 0.0
+        s.best_lot = max(cr) if cr else 0.0
+        s.worst_lot = min(cr) if cr else 0.0
+
     sources = sorted(by_channel.values(), key=lambda s: s.realized, reverse=True)
     grand = sum(s.realized for s in sources)
     total_closed = sum(s.closed_lots for s in sources)
+    total_wins = sum(s.wins for s in sources)
     return AttributionReport(sources=sources, grand_total=grand,
-                             total_closed_lots=total_closed)
+                             total_closed_lots=total_closed, total_wins=total_wins)
