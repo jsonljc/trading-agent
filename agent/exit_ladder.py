@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from infra.ib.models import PreparedOrder, FillStatus
 from infra.ib.gateway import IBGatewayUnavailable
+from skills.execution._pricing import marketable_sell_limit
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -22,7 +23,7 @@ async def fire_rung_if_crossed(
     *, gw, trim_store, intent_id: str, ticker: str,
     avg_fill_price: float, original_qty: int,
     rung: int, threshold_pct: float, trim_pct: float,
-    current_price: float,
+    current_price: float, slippage_cap_pct: float = 0.01,
 ) -> bool:
     threshold_price = avg_fill_price * (1.0 + threshold_pct)
     if current_price < threshold_price:
@@ -36,8 +37,11 @@ async def fire_rung_if_crossed(
 
     trim_qty = _round_half_up_min1(original_qty * trim_pct)
     contract = await gw.qualify_equity(ticker)
-    order = PreparedOrder(action="SELL", quantity=trim_qty, order_type="MKT",
-                          limit_price=None, tif="DAY")
+    # Marketable SELL limit: floor slippage at current_price * (1 - cap) so a
+    # thin book can't dump the trim well below market (was a naked MKT sell).
+    limit = marketable_sell_limit(current_price, slippage_cap_pct)
+    order = PreparedOrder(action="SELL", quantity=trim_qty, order_type="LMT",
+                          limit_price=limit, tif="DAY")
     client_order_id = f"{intent_id}:trim:R{rung}"
     try:
         trade = await gw.place_order(contract, order, client_order_id)
@@ -66,11 +70,12 @@ def _in_rth(now_eastern: datetime) -> bool:
 
 class ExitLadder:
     def __init__(self, gateway, intent_store, trim_store, *,
-                 poll_interval_seconds: int):
+                 poll_interval_seconds: int, slippage_cap_pct: float = 0.01):
         self._gw = gateway
         self._intents = intent_store
         self._trims = trim_store
         self._interval = poll_interval_seconds
+        self._cap = slippage_cap_pct
         self._task: asyncio.Task | None = None
         self._stopping = False
 
@@ -121,6 +126,7 @@ class ExitLadder:
                     rung=r["rung"], threshold_pct=r["threshold_pct"],
                     trim_pct=r["trim_pct"],
                     current_price=current_price,
+                    slippage_cap_pct=self._cap,
                 )
                 if not fired:
                     break  # rungs ordered; if R1 didn't fire, R2 won't either

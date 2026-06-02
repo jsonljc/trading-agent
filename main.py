@@ -186,6 +186,7 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         trade_intent_store,
         trim_store,
         poll_interval_seconds=policy.execution.exit_poll_interval_seconds,
+        slippage_cap_pct=policy.execution.shares_slippage_cap_pct,
     )
 
     reader = SocketReader(socket_path)

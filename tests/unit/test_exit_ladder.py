@@ -48,7 +48,9 @@ async def test_fires_at_threshold_and_records():
     )
     assert fired is True
     placed = gw.place_order.call_args[0][1]
-    assert placed.order_type == "MKT"
+    # Marketable SELL limit at current_price(105) * (1 - 1% default) -> 103.95.
+    assert placed.order_type == "LMT"
+    assert placed.limit_price == 103.95
     assert placed.action == "SELL"
     assert placed.quantity == 40
     trims.record_fire.assert_awaited_once()
