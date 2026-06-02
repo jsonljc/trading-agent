@@ -73,3 +73,22 @@ def test_size_with_position_suffix_matches():
 def test_size_with_weighting_suffix_matches():
     f = extract_features("a small 1% weighting @ $41.22")
     assert f.stated_size_pct == 1.0
+
+
+def test_exit_verb_detection():
+    for msg in ["Sold half my AAPL", "out of NVDA here", "closed TSLA",
+                "trimming MSFT into strength", "taking profits on AMD",
+                "scaling out of META", "stopped out of GOOG"]:
+        assert extract_features(msg).exit_verb_present is True, msg
+
+
+def test_exit_verb_absent_on_entries_and_commentary():
+    assert extract_features("Added a 2% position in CEG").exit_verb_present is False
+    assert extract_features("watching TEST closely").exit_verb_present is False
+
+
+def test_entry_and_exit_flags_are_independent():
+    # A rotation message can carry both an exit and an entry verb.
+    f = extract_features("out of AAPL, opened a position in TSLA")
+    assert f.exit_verb_present is True
+    assert f.entry_verb_present is True
