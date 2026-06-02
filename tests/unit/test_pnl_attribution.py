@@ -71,3 +71,36 @@ def test_multiple_sources_summed_and_sorted_desc():
         [a, b], [_sell("a", 10, 110.0), _sell("b", 10, 90.0)], [])
     assert [s.channel for s in report.sources] == ["stp", "mystic"]  # +100 before -100
     assert report.grand_total == 0.0
+
+
+def test_per_ticker_lines_grouped_by_ticker_and_instrument():
+    nvda = _entry("a", channel="stp", ticker="NVDA")
+    tsla = _entry("b", channel="stp", ticker="TSLA")
+    report = compute_attribution(
+        [nvda, tsla], [_sell("a", 10, 110.0), _sell("b", 10, 90.0)], [])
+    s = report.sources[0]
+    lines = {(l.ticker, l.instrument_type): l for l in s.by_ticker}
+    assert lines[("NVDA", "equity")].realized == 100.0
+    assert lines[("NVDA", "equity")].closed_lots == 1
+    assert lines[("TSLA", "equity")].realized == -100.0
+
+
+def test_open_option_lot_counted_and_costed_not_closed():
+    # option with NO sells: open, $0 realized, cost basis = 2.0*1*100 = 200
+    e = _entry("opt", channel="stp", ticker="AAPL", itype="option",
+               fill_price=2.0, fill_qty=1)
+    report = compute_attribution([e], [], [])
+    s = report.sources[0]
+    assert s.realized == 0.0
+    assert s.open_options == 1
+    assert s.open_option_cost == 200.0
+    assert s.closed_lots == 0
+    assert report.total_closed_lots == 0
+
+
+def test_closed_lots_counted_at_report_level():
+    a = _entry("a", channel="stp")
+    b = _entry("b", channel="mystic")
+    report = compute_attribution(
+        [a, b], [_sell("a", 10, 110.0), _sell("b", 5, 90.0)], [])
+    assert report.total_closed_lots == 2

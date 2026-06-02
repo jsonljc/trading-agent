@@ -91,6 +91,8 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
         exits_by[e["intent_id"]].append(e)
 
     by_channel: dict[str, SourcePnl] = {}
+    # (channel, ticker, instrument_type) -> [realized, closed_lots]
+    ticker_acc: dict[tuple, list] = defaultdict(lambda: [0.0, 0])
 
     def src(ch: str) -> SourcePnl:
         if ch not in by_channel:
@@ -100,14 +102,17 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
     for entry in entries:
         iid = entry["intent_id"]
         channel = entry["channel"] or "(unknown)"
+        ticker = entry["ticker"]
         itype = entry["instrument_type"]
         fill_price = entry["fill_price"]
+        fill_qty = entry["fill_qty"] or 0
         sells, _sell_anomaly = _valid_sells(trims_by.get(iid, []) + exits_by.get(iid, []))
 
         sold_total = sum(q for q, _ in sells)
         proceeds = sum(q * p for q, p in sells)
         mult = OPTION_MULTIPLIER if itype == "option" else 1
         realized = (proceeds - sold_total * (fill_price or 0.0)) * mult
+        is_closed = sold_total > 0
 
         s = src(channel)
         s.realized += realized
@@ -116,6 +121,22 @@ def compute_attribution(entries, trims, exits) -> AttributionReport:
         else:
             s.by_instrument.equity += realized
 
+        key = (channel, ticker, itype)
+        ticker_acc[key][0] += realized
+        if is_closed:
+            s.closed_lots += 1
+            ticker_acc[key][1] += 1
+        elif itype == "option":
+            s.open_options += 1
+            s.open_option_cost += (fill_price or 0.0) * fill_qty * OPTION_MULTIPLIER
+
+    for (ch, ticker, itype), (rl, cl) in ticker_acc.items():
+        by_channel[ch].by_ticker.append(TickerLine(ticker, itype, rl, cl))
+    for s in by_channel.values():
+        s.by_ticker.sort(key=lambda l: l.realized, reverse=True)
+
     sources = sorted(by_channel.values(), key=lambda s: s.realized, reverse=True)
     grand = sum(s.realized for s in sources)
-    return AttributionReport(sources=sources, grand_total=grand)
+    total_closed = sum(s.closed_lots for s in sources)
+    return AttributionReport(sources=sources, grand_total=grand,
+                             total_closed_lots=total_closed)
