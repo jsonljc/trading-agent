@@ -67,15 +67,15 @@ execution:
         trim_pct: 0.40
   sizing:
     default:
-      high: { shares: 0.10, options: 0.05 }
-      low:  { shares: 0.05, options: 0.05 }
+      high: { shares: 0.05, options: 0.03 }
+      low:  { shares: 0.03, options: 0.03 }
     per_channel:
       stocktalkweekly:
-        high: { shares: 0.20, options: 0.05 }
-        low:  { shares: 0.15, options: 0.05 }
+        high: { shares: 0.10, options: 0.03 }
+        low:  { shares: 0.08, options: 0.03 }
       mystic:
-        high: { shares: 0.15, options: 0.05 }
-        low:  { shares: 0.10, options: 0.05 }
+        high: { shares: 0.08, options: 0.03 }
+        low:  { shares: 0.05, options: 0.03 }
 
 discord_extension:
   forwarder_port: 9876
