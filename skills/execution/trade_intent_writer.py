@@ -59,7 +59,12 @@ class TradeIntentWriter(Skill):
             "policy_state": "approved",
             "execution_mode": None,
             "execution_state": None,
-            "outbox_status": "pending",
+            # Left None until the shares write-ahead sets 'dispatched' at submit.
+            # Seeding 'pending' here would strand every guard-skipped intent in
+            # the in-flight set forever (nothing transitions a never-submitted
+            # row out of 'pending'); the reconciler only acts on rows that carry
+            # a broker_order_ref, so 'pending' added no value.
+            "outbox_status": None,
             "signal_received_at": ctx.get("received_at", now),
             "intent_created_at": now,
             "created_at": now,

@@ -161,6 +161,28 @@ async def test_timed_out_partial_records_real_qty_and_cancels_residual(deps):
 
 
 @pytest.mark.asyncio
+async def test_options_rejection_uses_distinct_reason(deps):
+    # A broker rejection on the options leg must surface a 'options_rejected'
+    # reason (routes to the ORDER REJECTED alert), distinct from a timeout.
+    gw, intent_store = deps
+    gw.wait_fill = AsyncMock(return_value=FillResult(
+        status=FillStatus.REJECTED, broker_order_id="opt-1", perm_id=2,
+        submitted_qty=20, filled_qty=0, remaining_qty=20, avg_fill_price=None,
+        last_status="Inactive", status_timestamp="2026-05-05T13:31:00Z",
+    ))
+    sub = _make_submitter(gw, intent_store)
+    contract = BrokerContractRef(symbol="AAPL", sec_type="OPT", exchange="SMART",
+                                 currency="USD", strike=180.0, qualified=True)
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({"shares_intent_id": "s1", "ticker": "AAPL", "side": "long",
+                "quantity": 10, "selected_contract": contract})
+    result = await sub.run(ctx)
+    # shares already filled -> partial-success carrying the rejection reason.
+    assert "options_rejected" in result.updates["partial_execution_reason"]
+    intent_store.write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_zero_fill_options_cancels_and_partials(deps):
     gw, intent_store = deps
     gw.wait_fill = AsyncMock(return_value=FillResult(

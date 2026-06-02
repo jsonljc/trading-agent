@@ -67,7 +67,8 @@ class TelegramDigest(Skill):
     @staticmethod
     def is_order_rejected(reason: str) -> bool:
         """A hard broker rejection (distinct from a fill timeout / broker-down)."""
-        return reason.startswith("shares_rejected") or "broker_rejected" in reason
+        return (reason.startswith(("shares_rejected", "options_rejected"))
+                or "broker_rejected" in reason)
 
     async def send_order_rejected_alert(self, ctx: Context, reason: str) -> None:
         import html

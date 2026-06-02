@@ -63,6 +63,16 @@ fill, so it is acceptable. Adaptive algo intentionally deferred.
   when `open_interest`/`volume` are **present and below** threshold; when `None`,
   allow and log "liquidity data unavailable, gating on spread only" (fail-open).
 
+> **Known limitation (OI/volume gate is dormant):** `get_chain` quotes via a plain
+> `reqTickersAsync` snapshot, which does NOT request generic tick 101, so OI (and
+> often volume) arrive `nan → None` — even on a live subscription. The OI/volume
+> half of the gate therefore fails open in practice today; only the (correctly
+> fixed) mid-based spread gate fires. Activating OI/volume gating requires
+> switching to a streaming `reqMktData(genericTickList="100,101,104,106")` with a
+> short populate-then-cancel wait — a hot-path change deferred as a follow-up. The
+> code path, policy fields (`min_open_interest`/`min_volume`), and fail-open
+> semantics are all in place so flipping it on later is localized.
+
 ## Stream 3 — Partial-fill handling
 
 `wait_fill` emits `TIMED_OUT_PENDING` with `filled_qty > 0` on a partial. Both

@@ -39,6 +39,16 @@ orders the reconciler must check; terminal states drop out of it.
 - Distinct Telegram alert: `TelegramDigest.send_order_rejected_alert`, fired from
   `on_fail` when the reason marks a rejection (vs the generic error digest).
 
+> **Scope note — shares vs options crash-recovery asymmetry (deliberate):** the
+> full write-ahead state machine lives on the **shares** leg only. The options
+> intent is written *post-fill* by design (it is the secondary convex sleeve), so
+> there is no pre-`wait_fill` options row, and an options rejection has no intent
+> to mark `failed`/`dlq_reason` — the shares leg is the sole DLQ producer. An
+> options rejection does still emit a distinct `options_rejected:` reason that
+> routes to the ORDER REJECTED alert, and the reconciler's orphan check (which
+> matches `:options:` orderRefs) catches an options order placed-then-crashed.
+> Giving the options leg a symmetric write-ahead is a deferred follow-up.
+
 ## D2 — Manual kill switch (sentinel file)
 
 `KillSwitchGuard` skill at the FRONT of the phase2b chain: if a sentinel file

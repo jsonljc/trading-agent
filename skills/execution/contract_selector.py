@@ -40,8 +40,8 @@ class ContractSelector(Skill):
             # Liquidity gate, fail-open: OI/volume only gate when present.
             # Under delayed market data they arrive as None and we lean on the
             # (mid-based) spread alone.
-            min_oi = getattr(pg, "min_open_interest", 0)
-            min_vol = getattr(pg, "min_volume", 0)
+            min_oi = pg.min_open_interest
+            min_vol = pg.min_volume
             if c.open_interest is not None and c.open_interest < min_oi:
                 logger.info("ContractSelector: drop %s %s OI=%d < %d",
                             c.strike, c.expiry, c.open_interest, min_oi)

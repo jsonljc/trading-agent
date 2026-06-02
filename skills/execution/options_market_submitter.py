@@ -65,6 +65,12 @@ class OptionsMarketSubmitter(Skill):
         except IBGatewayUnavailable as exc:
             return partial_or(ctx, f"broker_unavailable:{exc}", "fail")
 
+        if fill.status == FillStatus.REJECTED:
+            # Distinct from a timeout so it routes to the ORDER REJECTED alert.
+            # (The options leg is written post-fill, so there is no intent row to
+            # mark 'failed'/dlq here — the shares leg is the DLQ producer.)
+            return partial_or(ctx, f"options_rejected:{fill.last_status}", "fail")
+
         if fill.filled_qty <= 0:
             await self._cancel_residual(trade, fill)
             return partial_or(ctx, f"options_not_filled:{fill.last_status}", "fail")

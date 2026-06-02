@@ -82,7 +82,7 @@ class IBGateway:
         await self._ib.connectAsync(p.host, p.port, clientId=p.client_id)
         # Market-data type from policy (default 3=delayed free tier; 1=live needs
         # a paid subscription). Single knob so going live is config, not code.
-        self._ib.reqMarketDataType(getattr(p, "market_data_type", 3))
+        self._ib.reqMarketDataType(p.market_data_type)
         accounts = self._ib.managedAccounts()
         self._account_id = accounts[0] if accounts else None
         self._connected = True
@@ -241,10 +241,15 @@ class IBGateway:
                     ref = _from_ib_contract(q)
                     ref.qualified = True
                     expiry_fmt = f"{expiry[:4]}-{expiry[4:6]}-{expiry[6:]}"
-                    # OI/volume need generic tick 101 + (usually) live data;
-                    # under delayed data they arrive nan/missing -> None, and the
-                    # liquidity gate fails open on the spread alone.
-                    oi = _safe_positive_int(getattr(td, "callOpenInterest", None))
+                    # NOTE: open interest needs generic tick 101 via a streaming
+                    # reqMktData; this plain reqTickersAsync snapshot does NOT
+                    # request it, so OI (and often volume) come back nan -> None
+                    # and ContractSelector's OI/volume gate is currently dormant
+                    # (it fails open, leaning on the mid-based spread gate). To
+                    # activate it, switch to reqMktData(genericTickList="100,101,
+                    # 104,106"). Tracked as a known limitation in the Phase C spec.
+                    oi_field = "putOpenInterest" if right == "P" else "callOpenInterest"
+                    oi = _safe_positive_int(getattr(td, oi_field, None))
                     vol = _safe_positive_int(getattr(td, "volume", None))
                     return OptionCandidate(
                         symbol=ticker, expiry=expiry_fmt, strike=strike, right=right,

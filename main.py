@@ -158,6 +158,11 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         from skills.posttrade.telegram_digest import TelegramDigest
         if TelegramDigest.is_broker_unavailable_skip(ctx, reason):
             await digest_skill.send_missed_signal_alert(ctx, reason)
+        elif reason == "kill_switch_engaged" and ctx.get("bucket") in ("HIGH", "LOW"):
+            # The operator engaged it deliberately, but still surface that an
+            # actionable entry was dropped (consistent with broker-down alerts).
+            await digest_skill.send_missed_signal_alert(
+                ctx, "kill switch engaged — new entry halted")
 
     async def on_success(ctx: Context) -> None:
         await audit_writer.write(ctx, "success")
