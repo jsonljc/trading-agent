@@ -7,6 +7,7 @@ from agent.skill import Skill
 from infra.ib.models import PreparedOrder, FillStatus
 from infra.ib.gateway import IBGatewayUnavailable
 from skills.execution._options_leg import already_terminated, partial_or
+from skills.execution._pricing import marketable_limit
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +15,12 @@ logger = logging.getLogger(__name__)
 class OptionsMarketSubmitter(Skill):
     name = "OptionsMarketSubmitter"
 
-    def __init__(self, gateway, intent_store, *, fill_timeout: float):
+    def __init__(self, gateway, intent_store, *, fill_timeout: float,
+                 slippage_cap_pct: float = 0.05):
         self._gateway = gateway
         self._intents = intent_store
         self._timeout = fill_timeout
+        self._cap = slippage_cap_pct
 
     async def run(self, ctx: Context) -> SkillResult:
         if (r := already_terminated(ctx)):
@@ -41,8 +44,20 @@ class OptionsMarketSubmitter(Skill):
             return SkillResult(status="fail",
                                reason="options_submit: missing contract/qty")
 
-        order = PreparedOrder(action="BUY", quantity=qty, order_type="MKT",
-                              limit_price=None, tif="DAY")
+        # Marketable limit off the LIVE option ask (sizing used the cached
+        # chain-lookup ask). Fall back to that cached ask if the live quote is
+        # missing; if neither is available we cannot price a limit.
+        try:
+            live_ask, _age = await self._gateway.get_option_ask(contract)
+        except IBGatewayUnavailable as exc:
+            return partial_or(ctx, f"broker_unavailable:{exc}", "fail")
+        ask = live_ask if live_ask and live_ask > 0 else (ctx.get("option_ask") or 0.0)
+        if ask <= 0:
+            return partial_or(ctx, "option_no_ask: cannot price limit", "fail")
+        limit = marketable_limit(ask, self._cap)
+
+        order = PreparedOrder(action="BUY", quantity=qty, order_type="LMT",
+                              limit_price=limit, tif="DAY")
         client_order_id = f"{ctx.trace_id}:options:{ctx.event_id}"
         try:
             trade = await self._gateway.place_order(contract, order, client_order_id)
@@ -50,8 +65,15 @@ class OptionsMarketSubmitter(Skill):
         except IBGatewayUnavailable as exc:
             return partial_or(ctx, f"broker_unavailable:{exc}", "fail")
 
-        if fill.status != FillStatus.FILLED:
+        if fill.filled_qty <= 0:
+            await self._cancel_residual(trade, fill)
             return partial_or(ctx, f"options_not_filled:{fill.last_status}", "fail")
+
+        if fill.status != FillStatus.FILLED:
+            # Partial fill: cancel the residual, record the contracts we own.
+            await self._cancel_residual(trade, fill)
+            logger.warning("options partial fill %s: %d/%d filled, residual cancelled",
+                           client_order_id, fill.filled_qty, fill.submitted_qty)
 
         options_intent_id = str(uuid.uuid4())
         await self._intents.write(
@@ -78,3 +100,12 @@ class OptionsMarketSubmitter(Skill):
             "options_fill_price": fill.avg_fill_price,
             "options_fill_qty": fill.filled_qty,
         })
+
+    async def _cancel_residual(self, trade, fill) -> None:
+        """Best-effort cancel of the working order's remainder."""
+        if fill.status == FillStatus.FILLED:
+            return
+        try:
+            await self._gateway.cancel_order(trade)
+        except Exception:
+            logger.exception("options residual cancel failed (order may rest at IB)")

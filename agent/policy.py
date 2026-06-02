@@ -42,7 +42,9 @@ class DedupePolicy(BaseModel):
 
 class PricingGuards(BaseModel):
     min_bid: float
-    max_spread_pct: float
+    max_spread_pct: float            # (ask-bid)/mid ceiling for the options leg
+    min_open_interest: int = 100     # reject when OI is present and below this
+    min_volume: int = 0              # same-day volume floor (0 = off until live data)
 
 
 class ModelsConfig(BaseModel):
@@ -107,6 +109,10 @@ class ExecutionPolicy(BaseModel):
     # (dead — PriceWalker bypassed by MKT chain)
     margin_multiplier: float = 2.0
     options_chase_threshold_pct: float = 0.10
+    # Marketable-limit slippage caps: limit = live_ask * (1 + cap). Options
+    # spreads are wide, so the options cap is looser than the shares cap.
+    options_slippage_cap_pct: float = 0.05
+    shares_slippage_cap_pct: float = 0.01
     exit_poll_interval_seconds: int = 2
     trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
         TrimRung(threshold_pct=0.05, trim_pct=0.40),

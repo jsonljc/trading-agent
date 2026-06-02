@@ -83,6 +83,7 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
             gateway, trade_intent_store, trim_store,
             fill_timeout=policy.execution.fill_wait_timeout_seconds,
             trim_rungs=rungs,
+            slippage_cap_pct=policy.execution.shares_slippage_cap_pct,
         ),
 
         # Options sub-chain (gated)
@@ -95,5 +96,6 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
         OptionsMarketSubmitter(
             gateway, trade_intent_store,
             fill_timeout=policy.execution.fill_wait_timeout_seconds,
+            slippage_cap_pct=policy.execution.options_slippage_cap_pct,
         ),
     ]

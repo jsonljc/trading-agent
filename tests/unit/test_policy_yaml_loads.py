@@ -18,3 +18,9 @@ def test_live_policy_yaml_loads():
     assert s.default.high.shares == 0.05
     assert pol.execution.margin_multiplier == 2.0
     assert pol.execution.options_chase_threshold_pct == 0.10
+    # Phase C marketable-limit slippage caps (options wider than shares).
+    assert pol.execution.options_slippage_cap_pct == 0.05
+    assert pol.execution.shares_slippage_cap_pct == 0.01
+    # Phase C liquidity gate: MID-based spread ceiling tightened + OI gate.
+    assert pol.pricing_policy_guards.max_spread_pct == 0.10
+    assert pol.pricing_policy_guards.min_open_interest == 100
