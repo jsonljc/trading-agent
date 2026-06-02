@@ -216,6 +216,34 @@ async def test_zero_fill_cancels_residual_and_records_zero(db):
 
 
 @pytest.mark.asyncio
+async def test_partial_then_broker_down_is_executed_not_skipped(db):
+    # First lot sells; the second lot's order hits a broker outage. Shares
+    # really sold -> reported as an executed (partial) sell, claim kept.
+    intents = TradeIntentStore(db)
+    await intents.insert(_filled_intent("e1:AAPL:long", fill_qty=50))
+    await intents.insert(_filled_intent("e2:AAPL:long", fill_qty=50))
+    gw = _gw()
+    calls = {"n": 0}
+
+    async def place(contract, order, coid):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise IBGatewayUnavailable("down")
+        return MagicMock()
+    gw.place_order = AsyncMock(side_effect=place)
+    gw.wait_fill = AsyncMock(return_value=FillResult(
+        status=FillStatus.FILLED, broker_order_id="o", perm_id=1,
+        submitted_qty=50, filled_qty=50, remaining_qty=0, avg_fill_price=99.0,
+        last_status="Filled", status_timestamp=_now()))
+    result = await _follower(gw, db).run(_ctx(scope="full", fp="fp-pb"))
+    assert result.status == "skip"
+    assert result.reason.startswith("sell_partial_broker_unavailable")
+    assert result.updates["sell_total_sold_qty"] == 50  # first lot really sold
+    # Claim is NOT released (the sold 50 must never be re-sold).
+    assert await PositionExitStore(db).claim_sell_event("fp-pb", "x") is False
+
+
+@pytest.mark.asyncio
 async def test_broker_unavailable_with_no_sale_releases_claim(db):
     intents = TradeIntentStore(db)
     await intents.insert(_filled_intent("e1:AAPL:long", fill_qty=100))

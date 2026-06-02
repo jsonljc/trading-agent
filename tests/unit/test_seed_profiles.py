@@ -42,6 +42,14 @@ def test_invalid_size_floor_rejected(tmp_path):
         load_profile(p)
 
 
+def test_each_seed_profile_has_sell_examples():
+    # The sell classifier ships with per-trader teaching examples (mirrors the
+    # entry conviction_examples), not an empty prompt.
+    for p in load_all_profiles(TRADERS_DIR):
+        assert len(p.sell_examples) >= 2, p.handle
+        assert all(e.scope in ("full", "partial") for e in p.sell_examples)
+
+
 def test_sell_examples_load_and_default_empty(tmp_path):
     from agent.traders.profile import SellExample
     # Defaults to empty when absent.

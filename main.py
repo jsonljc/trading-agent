@@ -157,16 +157,23 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         from skills.posttrade.telegram_digest import TelegramDigest
         # A followed sell executed a REAL order; do NOT audit it as 'skipped'
         # (that would corrupt P&L/fill-rate analytics) — record it distinctly
-        # and send the sell digest.
+        # and send the sell digest. A partial-then-broker-down sell ALSO really
+        # sold shares, so it is an executed sell (with a warning), not 'skipped'.
         if reason == "sell_followed":
             await audit_writer.write(ctx, "sell_followed")
             await digest_skill.send_sell_digest(ctx)
             return
+        if reason.startswith("sell_partial_broker_unavailable"):
+            await audit_writer.write(ctx, "sell_followed")
+            await digest_skill.send_sell_digest(ctx)  # qty>0 -> sends
+            await digest_skill.send_missed_signal_alert(
+                ctx, f"sell partially executed, broker then down: {reason}")
+            return
         await audit_writer.write(ctx, "skipped")
-        # Informational alerts for sell outcomes that did NOT (fully) execute.
+        # Informational alerts for sell outcomes that did NOT execute at all.
         if reason in ("no_open_position", "sell_outside_rth", "sell_zero_fill",
                       "sell_already_followed") or \
-                reason.startswith(("sell_broker_unavailable", "sell_partial_broker")):
+                reason.startswith("sell_broker_unavailable"):
             await digest_skill.send_missed_signal_alert(
                 ctx, f"sell not executed: {reason}")
             return

@@ -28,3 +28,18 @@ conviction_examples:
   - msg: "tailwind for the apple peice...."
     bucket: SKIP
     why: "color, not entry"
+
+# Sell/exit teaching examples for SellClassifier (full = close, partial = trim).
+sell_examples:
+  - msg: "out of NVDA here, done with it"
+    scope: full
+    why: explicit full close
+  - msg: "sold the rest of my AAPL"
+    scope: full
+    why: closing remainder
+  - msg: "trimmed half my TSLA into strength"
+    scope: partial
+    why: partial trim, half
+  - msg: "scaling out of MSFT, took some profits"
+    scope: partial
+    why: partial reduction

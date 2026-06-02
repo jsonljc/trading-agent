@@ -159,8 +159,24 @@ store / llm / trader registry / `shares_slippage_cap_pct` into the two skills.
 - e2e: filled shares intent → sell message (RTH) → position sold, exit recorded,
   entry chain not run, audit status='sell_followed'.
 
+## Implementation deviations (post pre-merge review)
+- **`release_sell_event` on full broker-down:** the spec said "no release", but the
+  impl deletes the claim when `total_sold == 0` and the broker was down, so a repost
+  can retry a sell that never even reached the book. This only fires when nothing
+  sold (a partial-then-broker-down keeps the claim so the sold portion is never
+  re-sold). Bounded race: under concurrent redelivery during an outage a duplicate
+  may be dropped (missed-sell, alerted) — never a double-sell. Accepted as a
+  robustness improvement over the strict no-release design.
+- **Residual trim/sell race:** `remaining_qty` reserves trims in-flight *at read
+  time*; SellFollower additionally re-reads `remaining_qty` and clamps `alloc`
+  immediately before each lot's order, shrinking (not fully eliminating) the window
+  where a trim-ladder rung fires mid-await. Worst case is bounded to one rung's
+  shares; full closure (shared lock / sell claims the rungs) is a deferred
+  concurrency item.
+
 ## Deferred (documented)
 - Options-leg sell-to-close (needs `get_option_bid` + contract reconstruct).
 - RTH zero-fill auto-retry (alert-only in v1); reworded-partial edge cases.
+- Full trim/sell mutual exclusion (see residual race above).
 - Other Phase E items (P&L attribution, replay, classifier eval, active-learning,
   economic guards) — separate specs.

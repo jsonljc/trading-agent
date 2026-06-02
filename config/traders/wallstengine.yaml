@@ -34,3 +34,18 @@ conviction_examples:
   - msg: "AVAV is approaching its 50-month moving average around $160. This is a bottom-fishing trade, so it may take time to base and move. But I like the risk/reward here and will hold through some volatility."
     bucket: SKIP
     why: "setup/watchlist commentary describing the technical level and how to think about it — no explicit OPEN/Added/position-size language indicating a fresh entry was taken"
+
+# Sell/exit teaching examples for SellClassifier (full = close, partial = trim).
+sell_examples:
+  - msg: "out of NVDA here, done with it"
+    scope: full
+    why: explicit full close
+  - msg: "sold the rest of my AAPL"
+    scope: full
+    why: closing remainder
+  - msg: "trimmed half my TSLA into strength"
+    scope: partial
+    why: partial trim, half
+  - msg: "scaling out of MSFT, took some profits"
+    scope: partial
+    why: partial reduction

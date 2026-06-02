@@ -112,7 +112,13 @@ class SellFollower(Skill):
             for intent_id, rem in remaining:        # oldest-first
                 if target <= 0:
                     break
-                alloc = min(rem, target)
+                # Re-check remaining immediately before placing: a concurrent
+                # trim-ladder fire during a prior lot's await could have reduced
+                # what's actually held (closes the residual trim/sell race).
+                fresh = await self._exits.remaining_qty(intent_id)
+                alloc = min(rem, fresh, target)
+                if alloc <= 0:
+                    continue
                 sold = await follow_sell_position(
                     gw=self._gw, exits_store=self._exits, fingerprint=fingerprint,
                     event_id=ctx.event_id, intent_id=intent_id, channel=channel,
@@ -121,13 +127,18 @@ class SellFollower(Skill):
                 total_sold += sold
                 target -= sold
         except IBGatewayUnavailable as exc:
+            ctx.update({"sell_total_sold_qty": total_sold, "sell_ticker": ticker})
             if total_sold == 0:
                 # Nothing sold -> release the claim so a repost can retry.
                 await self._exits.release_sell_event(fingerprint)
                 return SkillResult(status="skip",
-                                   reason=f"sell_broker_unavailable:{exc}")
+                                   reason=f"sell_broker_unavailable:{exc}",
+                                   updates={"sell_total_sold_qty": 0})
+            # Some shares really sold before the outage — surface it as an
+            # executed (partial) sell, not a 'skipped'/not-executed event.
             return SkillResult(status="skip",
-                               reason=f"sell_partial_broker_unavailable:{exc}")
+                               reason=f"sell_partial_broker_unavailable:{exc}",
+                               updates={"sell_total_sold_qty": total_sold})
 
         ctx.update({"sell_total_sold_qty": total_sold, "sell_ticker": ticker})
         if total_sold == 0:
