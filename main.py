@@ -52,6 +52,26 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     policy = load_policy(policy_path)
     conn = await get_connection(db_path)
 
+    # Startup DB health: integrity check + an off-machine snapshot. A torn WAL
+    # after an unclean shutdown otherwise stays silent until it corrupts a write.
+    from infra.storage.db import check_integrity, backup_database
+    try:
+        integrity = await check_integrity(conn)
+        if integrity != "ok":
+            logger.error("DB integrity_check FAILED: %s", integrity)
+        else:
+            logger.info("DB integrity_check ok")
+            try:
+                from datetime import datetime, timezone
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                dest = os.path.join("data", "backups", f"agent-{stamp}.db")
+                await backup_database(conn, dest)
+                logger.info("DB snapshot written to %s", dest)
+            except Exception:
+                logger.exception("DB backup failed (non-fatal)")
+    except Exception:
+        logger.exception("DB integrity check failed to run (non-fatal)")
+
     signal_store = SignalStore(conn)
     trace_store = TraceStore(conn)
     idempotency_store = IdempotencyStore(conn)

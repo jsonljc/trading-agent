@@ -25,3 +25,4 @@ bridge/*.xcodeproj/xcuserdata/
 .worktrees/
 logs/
 data/KILL
+data/backups/

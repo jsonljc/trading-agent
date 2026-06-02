@@ -1,3 +1,4 @@
+import os
 import aiosqlite
 
 SCHEMA = """
@@ -220,6 +221,30 @@ async def get_connection(db_path: str) -> aiosqlite.Connection:
     await _migrate(conn)
     await conn.commit()
     return conn
+
+
+async def check_integrity(conn: aiosqlite.Connection) -> str:
+    """Run PRAGMA integrity_check. Returns 'ok' when the database is healthy,
+    otherwise the first reported problem. Cheap insurance against silent
+    corruption (a torn WAL after an unclean shutdown) going unnoticed."""
+    async with conn.execute("PRAGMA integrity_check") as cur:
+        row = await cur.fetchone()
+    return row[0] if row else "unknown"
+
+
+async def backup_database(conn: aiosqlite.Connection, dest_path: str) -> str:
+    """Write a consistent snapshot to dest_path via VACUUM INTO (online, no
+    locking of writers). dest_path must not already exist. Returns dest_path.
+
+    Intended for an off-machine destination (synced dir / external mount) so a
+    disk loss does not take the trade ledger with it."""
+    parent = os.path.dirname(dest_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    # VACUUM cannot run inside a transaction — settle any pending work first.
+    await conn.commit()
+    await conn.execute("VACUUM INTO ?", (dest_path,))
+    return dest_path
 
 
 async def _migrate(conn: aiosqlite.Connection) -> None:
