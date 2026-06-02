@@ -182,9 +182,27 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
 
         await orch.run(ctx)
 
+    async def _on_reconcile_discrepancy(summary: dict) -> None:
+        lines = []
+        for v in summary.get("vanished", []):
+            tag = "likely FILLED while down" if v["in_position"] else "vanished"
+            lines.append(f"• {v['ticker']} intent {v['intent_id']} — {tag}")
+        for o in summary.get("orphans", []):
+            lines.append(f"• orphan IB order {o['order_id']} ({o['order_ref']})")
+        if not lines:
+            return
+        try:
+            await telegram.send_message(
+                "🔎 <b>RECONCILER</b> — broker/db mismatch, manual review:\n"
+                + "\n".join(lines)
+            )
+        except Exception:
+            logger.exception("failed to send reconciler discrepancy alert")
+
     reconciler = ExecutionReconciler(
         gateway, execution_store, trade_intent_store,
         interval_seconds=policy.execution.reconciler_interval_seconds,
+        on_discrepancy=_on_reconcile_discrepancy,
     )
 
     exit_ladder = ExitLadder(

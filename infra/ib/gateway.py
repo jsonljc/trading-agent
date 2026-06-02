@@ -393,6 +393,21 @@ class IBGateway:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"get_open_orders failed: {exc}") from exc
 
+    async def get_positions(self) -> list:
+        """Live broker positions (for the reconciler's filled-while-down check)."""
+        self._read_breaker.check()
+        try:
+            if not self._ib:
+                return []
+            positions = self._ib.positions()
+            self._read_breaker._record_success()
+            return positions
+        except IBGatewayUnavailable:
+            raise
+        except Exception as exc:
+            self._read_breaker._record_failure()
+            raise IBGatewayUnavailable(f"get_positions failed: {exc}") from exc
+
     async def place_order(
         self,
         contract_ref: BrokerContractRef,
