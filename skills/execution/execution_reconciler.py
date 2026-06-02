@@ -6,8 +6,10 @@ from infra.ib.gateway import IBGatewayUnavailable
 
 logger = logging.getLogger(__name__)
 
-# Order refs we set look like "<trace>:shares:<event>" / ":options:" / ":trim:".
-_OURS_MARKERS = (":shares:", ":options:", ":trim:")
+# Entry order refs look like "<trace>:shares:<event>" / ":options:". Trim sells
+# (":trim:") are deliberately EXCLUDED: they rest at IB until their rung fires and
+# are tracked in trade_intent_trims (never the outbox), so they are not orphans.
+_OURS_MARKERS = (":shares:", ":options:")
 
 
 class ExecutionReconciler:
@@ -83,14 +85,17 @@ class ExecutionReconciler:
             logger.info("ExecutionReconciler: broker unavailable, skipping pass")
             return None
 
-        live_ids = {str(getattr(o, "orderId", "")) for o in open_orders}
+        # Match on the STABLE orderRef (our client_order_id), NOT the per-session
+        # orderId, which IB reassigns from nextValidId after a reconnect — so a
+        # genuinely-still-working pre-crash order would otherwise look "vanished".
+        live_refs = {getattr(o, "orderRef", "") or "" for o in open_orders}
         pos_symbols = await self._live_position_symbols()
         pending_refs = {r["broker_order_ref"] for r in pending if r["broker_order_ref"]}
 
         vanished = []
         for r in pending:
             ref = r["broker_order_ref"]
-            if ref and ref not in live_ids:
+            if ref and ref not in live_refs:
                 vanished.append({
                     "intent_id": r["intent_id"],
                     "ticker": r["ticker"],
@@ -100,10 +105,12 @@ class ExecutionReconciler:
 
         orphans = []
         for o in open_orders:
-            oid = str(getattr(o, "orderId", ""))
             oref = getattr(o, "orderRef", "") or ""
-            if oid not in pending_refs and any(m in oref for m in _OURS_MARKERS):
-                orphans.append({"order_id": oid, "order_ref": oref})
+            if oref and oref not in pending_refs and any(m in oref for m in _OURS_MARKERS):
+                orphans.append({
+                    "order_id": str(getattr(o, "orderId", "")),
+                    "order_ref": oref,
+                })
 
         summary = {"vanished": vanished, "orphans": orphans}
         if (vanished or orphans) and self._on_discrepancy is not None:

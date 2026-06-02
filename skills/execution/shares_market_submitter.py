@@ -43,10 +43,12 @@ class SharesMarketSubmitter(Skill):
             trade = await self._gateway.place_order(contract, order, client_order_id)
             # Write-ahead BEFORE waiting for the fill: a crash mid-fill then
             # leaves a 'submitted'/'dispatched' row the reconciler can resolve
-            # against IB's open orders on restart.
+            # against IB's open orders on restart. Persist the STABLE
+            # client_order_id (IB's orderRef) — the per-session orderId is
+            # reassigned on reconnect and would not match a pre-crash order.
             await self._intents.update_execution_state(
                 intent_id, "submitted", outbox_status="dispatched",
-                broker_order_ref=str(trade.order.orderId),
+                broker_order_ref=client_order_id,
                 order_submitted_at=datetime.now(timezone.utc).isoformat(),
             )
             fill = await self._gateway.wait_fill(trade, timeout=self._timeout)
@@ -65,9 +67,11 @@ class SharesMarketSubmitter(Skill):
         # Anything with filled_qty>0 is a real (possibly partial) position we own.
         if fill.filled_qty <= 0:
             await self._cancel_residual(trade, fill)
+            cancel_reason = ("broker_cancelled"
+                             if fill.status == FillStatus.CANCELLED else "fill_timeout")
             await self._intents.update_execution_state(
                 intent_id, "cancelled", outbox_status="cancelled",
-                cancel_reason="fill_timeout",
+                cancel_reason=cancel_reason,
                 cancelled_at=datetime.now(timezone.utc).isoformat(),
             )
             return SkillResult(status="fail",

@@ -74,11 +74,22 @@ async def test_vanished_order_with_live_position_is_flagged_filled_while_down():
 
 
 async def test_working_order_not_flagged():
-    row = {"intent_id": "e1:NVDA:long", "broker_order_ref": "11",
+    # Match is on the STABLE orderRef (client_order_id), not the per-session
+    # orderId — so it survives a crash+reconnect.
+    row = {"intent_id": "e1:NVDA:long", "broker_order_ref": "t1:shares:e1",
            "ticker": "NVDA", "outbox_status": "dispatched"}
-    rec = _build([row], open_orders=[_order(11)])  # str(11) == "11" matches ref
+    rec = _build([row], open_orders=[_order(11, order_ref="t1:shares:e1")])
     summary = await rec.reconcile_once()
     assert summary["vanished"] == []
+
+
+async def test_resting_trim_order_is_not_an_orphan():
+    # Trim sells carry ':trim:' in their orderRef and rest at IB until the rung
+    # threshold; they are tracked in trade_intent_trims, NOT the outbox, so they
+    # must NOT be reported as orphan broker orders.
+    rec = _build([], open_orders=[_order(77, order_ref="i1:trim:R1")])
+    summary = await rec.reconcile_once()
+    assert summary["orphans"] == []
 
 
 async def test_pending_without_broker_ref_not_flagged():
@@ -91,11 +102,12 @@ async def test_pending_without_broker_ref_not_flagged():
 
 
 async def test_flags_orphan_broker_order():
-    # A live IB order that looks like ours but maps to no in-flight intent.
+    # A live ENTRY order that looks like ours but maps to no in-flight intent.
     rec = _build([], open_orders=[_order(99, order_ref="trace:shares:e9")])
     summary = await rec.reconcile_once()
     assert len(summary["orphans"]) == 1
     assert summary["orphans"][0]["order_id"] == "99"
+    assert summary["orphans"][0]["order_ref"] == "trace:shares:e9"
 
 
 async def test_discrepancy_callback_fired():

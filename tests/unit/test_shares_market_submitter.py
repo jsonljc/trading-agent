@@ -160,7 +160,8 @@ async def test_write_ahead_submitted_before_fill(submitter_deps):
     wa = intent_store.update_execution_state.call_args_list[0]
     assert wa.args[1] == "submitted"
     assert wa.kwargs["outbox_status"] == "dispatched"
-    assert wa.kwargs["broker_order_ref"] is not None
+    # Stable client_order_id (orderRef), not the per-session orderId.
+    assert ":shares:" in wa.kwargs["broker_order_ref"]
     assert wa.kwargs["order_submitted_at"] is not None
 
 
