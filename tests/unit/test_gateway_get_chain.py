@@ -106,3 +106,37 @@ async def test_get_chain_partial_qualify_failures_skipped():
 
     candidates = await gw.get_chain("NVDA", spot_price=152.0)
     assert len(candidates) >= 1
+
+
+async def test_get_chain_returns_single_candidate():
+    from datetime import date, timedelta
+    far_expiry = (date.today() + timedelta(days=200)).strftime("%Y%m%d")
+
+    gw = IBGateway(_policy(min_expiry_days=180))
+    gw._ib = MagicMock()
+    stock_ref = MagicMock(); stock_ref.conId = 12345
+
+    chain = _make_chain(strikes=[150.0, 152.0, 155.0, 160.0], expirations=[far_expiry])
+    gw._ib.reqSecDefOptParamsAsync = AsyncMock(return_value=[chain])
+
+    opt_calls = [0]
+    async def one_survivor(contract):
+        if not hasattr(contract, 'secType') or contract.secType != "OPT":
+            return [stock_ref]
+        opt_calls[0] += 1
+        if opt_calls[0] >= 2:
+            return []  # only the first option qualifies
+        c = MagicMock()
+        c.symbol = "NVDA"; c.secType = "OPT"; c.exchange = "SMART"
+        c.currency = "USD"; c.conId = 99
+        c.lastTradeDateOrContractMonth = far_expiry
+        c.strike = contract.strike; c.right = contract.right
+        c.multiplier = "100"; c.localSymbol = None; c.tradingClass = None
+        return [c]
+
+    gw._ib.qualifyContractsAsync = AsyncMock(side_effect=one_survivor)
+    td = MagicMock(); td.bid = 2.0; td.ask = 2.5
+    gw._ib.reqTickersAsync = AsyncMock(return_value=[td])
+
+    candidates = await gw.get_chain("NVDA", spot_price=152.0)
+    assert len(candidates) == 1

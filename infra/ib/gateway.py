@@ -252,9 +252,9 @@ class IBGateway:
             ])
             candidates = [c for c in results if c is not None]
 
-            if len(candidates) < 2:
+            if len(candidates) < 1:
                 self._read_breaker._record_failure()
-                raise IBGatewayUnavailable("chain_lookup_insufficient_candidates")
+                raise IBGatewayUnavailable("chain_lookup_no_candidates")
 
             self._read_breaker._record_success()
             return candidates
