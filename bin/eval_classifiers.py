@@ -112,14 +112,22 @@ def render_report(report: EvalReport) -> str:
 
 
 def _render_confusion(report: EvalReport) -> str:
-    labels = report.labels
-    width = max((len(l) for l in labels), default=4) + 1
+    # The matrix can contain expected/predicted keys outside report.labels — e.g.
+    # a real-LLM run predicting "none" (a missed sell). Render those as extra
+    # rows/columns so misses are visible in the terminal, not just the JSON.
+    labels = list(report.labels)
+    extra_pred = {p for row in report.confusion.values() for p in row}
+    extra_exp = set(report.confusion)
+    cols = labels + sorted((extra_pred | extra_exp) - set(labels))
+    rows_order = labels + sorted(extra_exp - set(labels))
+
+    width = max((len(l) for l in cols), default=4) + 1
     width = max(width, 6)
-    head = "exp\\pred".ljust(width) + "".join(l.rjust(width) for l in labels)
+    head = "exp\\pred".ljust(width) + "".join(c.rjust(width) for c in cols)
     rows = [head]
-    for exp in labels:
+    for exp in rows_order:
         row = report.confusion.get(exp, {})
-        cells = "".join(str(row.get(pred, 0)).rjust(width) for pred in labels)
+        cells = "".join(str(row.get(pred, 0)).rjust(width) for pred in cols)
         rows.append(exp.ljust(width) + cells)
     return "\n".join(rows)
 

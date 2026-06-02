@@ -1,12 +1,12 @@
-{"msg": "closed $RKLB here, thesis played out, done with the name", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
-{"msg": "sold the remainder of my $CRDO into the gap up", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
-{"msg": "out of $HOOD completely, moving on", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "rang the register on my entire $RKLB stake — the thesis fully played out so I closed it, zero shares left", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "the gap up gave me my exit on $CRDO — dumped what was left of the position, flat now", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
+{"msg": "wrapped up my $HOOD trade today — sold every share, nothing left on the books, time to move on", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
 {"msg": "exited $RDDT in full, no longer like the setup", "trader": "mystic", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
 {"msg": "stopped out of $ALAB on the break of support", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "full"}}
-{"msg": "trimmed a third of $NBIS into the rip, still hold most of it", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
-{"msg": "scaling out of $IOT here, took some profits but keeping a runner", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
-{"msg": "sold half my $TMDX into strength, locking gains", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
-{"msg": "trimmed $OSCR a bit on the pop, still believe in the longer story", "trader": "mystic", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "sold down about a third of my $NBIS on this rip to lock some gains — bulk of the position stays on", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "lightening up on $IOT at these levels — sold a chunk to bank profit but leaving a runner on", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "this pop let me cut my $TMDX back by 50% and bank the profit, still riding the other half", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
+{"msg": "shaved a little $OSCR into the pop to de-risk, sold maybe a quarter — long-term story is intact so keeping the rest", "trader": "mystic", "kind": "sell", "expected": {"is_sell": true, "scope": "partial"}}
 {"msg": "$AFRM sold off hard today on the short report, no news of substance though", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
 {"msg": "watching $NET into the print, might add if it holds the 50-week", "trader": "wallstengine", "kind": "sell", "expected": {"is_sell": false, "scope": null}}
 {"msg": "the market dumped into the close, $SPY $QQQ both red, ugly tape", "trader": "stocktalkweekly", "kind": "sell", "expected": {"is_sell": false, "scope": null}}

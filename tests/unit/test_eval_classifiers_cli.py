@@ -13,6 +13,8 @@ _spec.loader.exec_module(eval_classifiers)
 main = eval_classifiers.main
 RecordedLLM = eval_classifiers.RecordedLLM
 
+from agent.classifier_eval import build_report
+
 _ROOT = Path(__file__).resolve().parents[2]
 TRADERS_DIR = str(_ROOT / "config" / "traders")
 SHIPPED_FIXTURES = str(_ROOT / "tests" / "fixtures" / "classifier_eval")
@@ -135,6 +137,33 @@ def test_shipped_sample_cache_matches_shipped_fixtures(capsys):
         assert report["accuracy"] == 1.0, (
             f"{report['classifier']} not 100% on oracle cache: "
             f"{report['accuracy']}")
+
+
+def test_confusion_render_shows_out_of_label_predicted_key():
+    # A real-LLM run can predict a key outside the declared labels (e.g. "none"
+    # for a missed sell). The terminal table must surface it as a column AND row,
+    # not just the JSON. Here expected "sell"/"partial" got predicted "none".
+    pairs = [
+        ("sell", "sell"),
+        ("sell", "none"),       # missed sell -> out-of-label predicted column
+        ("partial", "none"),    # out-of-label predicted on a scope-ish slice
+    ]
+    report = build_report("x", pairs, ["sell", "not_sell"])
+    rendered = eval_classifiers._render_confusion(report)
+    lines = rendered.splitlines()
+    header = lines[0]
+    # The out-of-label predicted key "none" is a visible column ...
+    assert "none" in header
+    none_col = header.split().index("none")
+    # ... and the out-of-label expected key "partial" gets its own row.
+    assert any(line.startswith("partial") for line in lines)
+    # The missed-sell (expected sell, predicted none) count of 1 lands in the
+    # "none" column on the "sell" row — proving the cell is actually rendered.
+    sell_row = next(line for line in lines if line.startswith("sell")
+                    and not line.startswith("sell\\"))
+    # header has the "exp\\pred" label as its first token; data rows have the
+    # expected-label as their first token, so column index aligns.
+    assert sell_row.split()[none_col] == "1"
 
 
 def test_cli_does_not_touch_live_llm(tmp_path, monkeypatch, capsys):

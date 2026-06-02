@@ -7,7 +7,7 @@ sell-detection / scope labels.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -83,7 +83,12 @@ def accuracy(pairs: list[tuple[str, str]]) -> float:
 
 
 def macro_f1(metrics: dict[str, ClassMetrics]) -> float:
-    """Unweighted mean of per-class F1 (empty -> 0.0)."""
+    """Unweighted mean of per-class F1 (empty -> 0.0).
+
+    A label with zero support (never expected and never predicted) contributes
+    F1=0 to the mean, matching sklearn's macro average. As a result a per-slice
+    macro-F1 can look low when a class is simply absent from that slice.
+    """
     if not metrics:
         return 0.0
     return sum(m.f1 for m in metrics.values()) / len(metrics)
@@ -100,7 +105,6 @@ class EvalReport:
     confusion: dict[str, dict[str, int]]
     accuracy: float
     macro_f1: float
-    pairs: list[tuple[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -126,5 +130,4 @@ def build_report(
         confusion=confusion_matrix(pairs),
         accuracy=accuracy(pairs),
         macro_f1=macro_f1(per_class),
-        pairs=list(pairs),
     )
