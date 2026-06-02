@@ -18,6 +18,14 @@ Paper mode only. Read-only — this feature never places, modifies, or cancels o
 - **Per-lot accounting**, and unambiguous: every sell is already keyed to a specific
   entry `intent_id`, so there is no FIFO / average-cost matching to resolve. Each
   filled entry intent IS one lot.
+- **Lots = every filled `trade_intents` row, equity AND option.** Options are written
+  as *child* rows (`instrument_type='option'`, `parent_intent_id` = the shares
+  intent_id) by `OptionsMarketSubmitter`. They are real lots with their own cost
+  basis and MUST be included. **Do NOT filter `parent_intent_id IS NULL`** — that
+  would silently drop every options position. (Child rows carry their own `channel`,
+  so per-source grouping is correct for them too.) Shorts never fill
+  (`SharesMarketSubmitter` skips `side='short'`), so all filled entries are `long`;
+  no side filtering is needed.
 - Sells for a lot come from **two** tables, both keyed by the entry `intent_id`:
   - `trade_intent_trims` — the +5%/+10% upside trim-ladder sells (`sold_qty`,
     `sold_avg_price`, fire timestamp `fired_at`).
@@ -29,7 +37,17 @@ Paper mode only. Read-only — this feature never places, modifies, or cancels o
 - **Realized formula** per entry intent:
   `realized = Σ(sold_qty × sold_avg_price) − (Σ sold_qty × entry.fill_price)`,
   summed across that intent's trims + exits. Multiply by the contract multiplier
-  (100) for `instrument_type='option'`.
+  (100, always — not stored per row) for `instrument_type='option'`.
+- **A "sell" counts only when `sold_qty > 0` AND `sold_avg_price` is non-NULL.**
+  `position_exits` records zero-fill follow-sells as `sold_qty=0` (audit trail);
+  a trim/exit can also carry a NULL avg price. Such rows are **excluded entirely**
+  from realized math and from "closed lot" determination — they neither add proceeds
+  nor mark a lot closed.
+- **Data-quality anomalies** are excluded from the math and **flagged in output**
+  (never booked as phantom P&L): a sell with `sold_qty > 0` but NULL `sold_avg_price`,
+  and an entry with `fill_price <= 0` (shares submitter writes `avg_fill_price or 0.0`,
+  so a 0.0 cost basis is possible). The lot/source is marked with a `⚠ data` flag and
+  its anomalous component is left out of the totals rather than fabricating a gain/loss.
 - **Options realize $0 today.** The trim ladder qualifies equity only
   (`gw.qualify_equity`) and sell-following is shares-only, so options currently have
   **no exit path**. They are reported with cost basis + held qty and an explicit
@@ -102,7 +120,11 @@ Definitions:
 ### Telegram surface = the `--telegram` flag (no new skill/daemon)
 - Formats a compact HTML summary (per-source totals + grand total + win rates) and
   sends via the existing `TelegramClient.send_message` (async) wrapped in a one-shot
-  `asyncio.run`. Bot token + chat id from `.env` (same source `main.py` uses).
+  `asyncio.run`. The client is built exactly as `main.py` does it:
+  `policy = load_policy(--policy)` → `TelegramClient(policy.telegram.bot_token,
+  policy.telegram.chat_id)`. `bot_token` resolves `TELEGRAM_BOT_TOKEN` from the env
+  via the policy field validator; `chat_id` comes from `config/policy.yaml`. Adds a
+  `--policy` flag (default `config/policy.yaml`).
 - Rationale: a P&L summary is periodic/on-demand, not a live trade event, so it does
   not belong in the skill chain. One entry point keeps CLI and Telegram math
   identical. The user triggers it manually or via existing scheduling
@@ -132,15 +154,21 @@ Definitions:
 
 - **Unit** `tests/unit/test_pnl_attribution.py` (the pure core, fixtures):
   full close (gain), full close (loss), partial close, trim-only lot,
-  trim + follow-sell mix on one lot, options lot ($0 realized + open marker),
+  trim + follow-sell mix on one lot, options child lot ($0 realized + open marker),
   multi-source + multi-ticker grouping, win-rate / avg-win / avg-loss / best /
-  worst math, NULL-price data-quality row, empty input.
+  worst math, **zero-fill exit (`sold_qty=0`) ignored**, **NULL `sold_avg_price`
+  with `sold_qty>0` → flagged + excluded**, **`fill_price=0.0` entry → flagged**,
+  empty input.
 - **Integration** `tests/integration/test_pnl_report_cli.py`:
-  seed a temp DB via the real stores (`TradeIntentStore`, `TrimLadderStore`,
-  `PositionExitStore`), run `bin/pnl_report.py` as a subprocess (or call `main()`),
-  assert table content + `--channel` / `--since-entry` / `--since-sell` filtering.
-  `--telegram` path: monkeypatch `TelegramClient.send_message`, assert it is called
-  with the expected summary; never hits the network.
+  seed a temp **file** DB (`tmp_path / "t.db"` via `get_connection`) through the real
+  stores (`TradeIntentStore`, `TrimLadderStore`, `PositionExitStore`) — a **file**, not
+  `:memory:`, because the sync `sqlite3` CLI opens its own connection and cannot see an
+  in-memory aiosqlite DB. Then run the CLI `main()` with `--db` pointed at that file and
+  assert table content + `--channel` / `--since-entry` / `--since-sell` filtering. Seed
+  must cover the audit findings: an options child lot ($0 realized, included), a
+  zero-fill exit (excluded), and a `fill_price=0.0` lot (flagged). `--telegram` path:
+  monkeypatch the send (FakeTelegramClient / `mocker.patch`), assert it is called with
+  the expected summary; never hits the network.
 
 ## Out of scope (YAGNI)
 
