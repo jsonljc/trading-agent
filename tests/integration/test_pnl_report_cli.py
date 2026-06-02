@@ -79,3 +79,41 @@ def test_cli_channel_filter(seeded_db, capsys):
 def test_cli_missing_db_exits_nonzero(tmp_path, capsys):
     rc = cli.main(["--db", str(tmp_path / "nope.db")])
     assert rc == 2
+
+
+def test_render_telegram_summary_is_compact_html():
+    from agent.pnl_attribution import (
+        AttributionReport, SourcePnl, InstrumentBreakdown)
+    s = SourcePnl(channel="stp", realized=100.0, closed_lots=1, wins=1,
+                  by_instrument=InstrumentBreakdown(equity=100.0))
+    report = AttributionReport(sources=[s], grand_total=100.0,
+                               total_closed_lots=1, total_wins=1)
+    html = cli.render_telegram(report)
+    assert "stp" in html
+    assert "+100.00" in html
+    assert "<b>" in html  # uses HTML parse_mode markup
+
+
+def test_telegram_flag_sends_summary(seeded_db, capsys, monkeypatch):
+    sent = []
+
+    class FakePolicy:
+        class telegram:
+            bot_token = "x"
+            chat_id = "y"
+
+    monkeypatch.setattr(cli, "load_policy", lambda path: FakePolicy())
+
+    class FakeClient:
+        def __init__(self, token, chat_id):
+            pass
+        async def send_message(self, text):
+            sent.append(text)
+
+    monkeypatch.setattr(cli, "TelegramClient", FakeClient)
+    rc = cli.main(["--db", seeded_db, "--telegram"])
+    assert rc == 0
+    assert len(sent) == 1
+    assert "stp" in sent[0]
+    # terminal table still printed
+    assert "stp" in capsys.readouterr().out

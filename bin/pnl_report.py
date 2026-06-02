@@ -15,11 +15,14 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+import asyncio
 import os
 import sqlite3
 import sys
 
 from agent.pnl_attribution import compute_attribution, AttributionReport
+from agent.policy import load_policy
+from infra.telegram.client import TelegramClient
 
 
 def _fetch(db_path, *, channel=None, since_entry=None, since_sell=None):
@@ -85,6 +88,24 @@ def render_table(report: AttributionReport) -> str:
     return "\n".join(lines)
 
 
+def render_telegram(report: AttributionReport) -> str:
+    if not report.sources:
+        return "<b>P&amp;L</b>: no realized P&amp;L for the selected window."
+    rows = [f"<b>Realized P&amp;L by source</b>  (total "
+            f"<b>{report.grand_total:+.2f}</b>, {report.total_closed_lots} lots, "
+            f"{report.win_rate * 100:.0f}% win)"]
+    for s in report.sources:
+        rows.append(f"• <b>{s.channel}</b>: {s.realized:+.2f} "
+                    f"({s.closed_lots} lots, {s.win_rate * 100:.0f}% win)")
+    return "\n".join(rows)
+
+
+async def _send_telegram(policy_path: str, text: str) -> None:
+    policy = load_policy(policy_path)
+    client = TelegramClient(policy.telegram.bot_token, policy.telegram.chat_id)
+    await client.send_message(text)
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(description="Per-source realized P&L report")
@@ -109,6 +130,12 @@ def main(argv=None) -> int:
         since_sell=args.since_sell)
     report = compute_attribution(entries, trims, exits)
     print(render_table(report))
+    if args.telegram:
+        try:
+            asyncio.run(_send_telegram(args.policy, render_telegram(report)))
+        except Exception as exc:  # report already printed; surface send failure
+            print(f"error: telegram send failed: {exc}", file=sys.stderr)
+            return 3
     return 0
 
 
