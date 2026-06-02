@@ -135,6 +135,23 @@ class TradeIntentStore:
         ) as cur:
             return await cur.fetchall()
 
+    async def get_open_shares_positions(
+        self, channel: str, ticker: str
+    ) -> list[aiosqlite.Row]:
+        """Filled equity positions for (channel, ticker), oldest fill first.
+
+        Channel-scoped so a trader's sell only closes that trader's position.
+        Sell-following nets remaining held qty against these via
+        PositionExitStore.remaining_qty."""
+        async with self._conn.execute(
+            "SELECT * FROM trade_intents "
+            "WHERE channel=? AND ticker=? AND execution_state='filled' "
+            "AND instrument_type='equity' "
+            "ORDER BY filled_at ASC, created_at ASC",
+            (channel, ticker),
+        ) as cur:
+            return list(await cur.fetchall())
+
     async def get_pending_outbox(self) -> list[aiosqlite.Row]:
         async with self._conn.execute(
             "SELECT * FROM trade_intents WHERE outbox_status IN ('pending', 'dispatched')"
