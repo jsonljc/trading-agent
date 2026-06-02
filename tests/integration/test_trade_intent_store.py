@@ -109,6 +109,9 @@ async def test_update_fill_sets_filled_at_and_broker_ref(db):
     # Cooldown revival: get_filled_since now finds the fill.
     rows = await store.get_filled_since("NVDA", "2020-01-01T00:00:00+00:00")
     assert len(rows) == 1
+    # A confirmed fill advances the outbox out of the in-flight set.
+    assert row["outbox_status"] == "confirmed"
+    assert len(await store.get_pending_outbox()) == 0
 
 
 async def test_write_records_filled_at_and_broker_ref(db):

@@ -95,3 +95,16 @@ async def test_missed_signal_alert_includes_trader_ticker_bucket():
     assert "circuit open" in msg
 
 
+
+
+async def test_order_rejected_alert_is_distinct():
+    client = FakeTelegramClient()
+    skill = TelegramDigest(client, mode="signal_only")
+    assert TelegramDigest.is_order_rejected("shares_rejected:Inactive")
+    assert TelegramDigest.is_order_rejected("broker_rejected:Inactive")
+    assert not TelegramDigest.is_order_rejected("shares_not_filled:Submitted")
+    await skill.send_order_rejected_alert(make_ctx(side="long"),
+                                          "shares_rejected:Inactive")
+    assert len(client.sent) == 1
+    assert "ORDER REJECTED" in client.sent[0]
+    assert "DLQ" in client.sent[0]

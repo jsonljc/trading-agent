@@ -59,7 +59,7 @@ class TradeIntentWriter(Skill):
             "policy_state": "approved",
             "execution_mode": None,
             "execution_state": None,
-            "outbox_status": None,
+            "outbox_status": "pending",
             "signal_received_at": ctx.get("received_at", now),
             "intent_created_at": now,
             "created_at": now,

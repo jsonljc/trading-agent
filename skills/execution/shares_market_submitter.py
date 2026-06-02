@@ -32,6 +32,7 @@ class SharesMarketSubmitter(Skill):
         if not contract or not contract.qualified or not qty or qty < 1:
             return SkillResult(status="fail", reason="shares_submit: missing contract/qty")
 
+        intent_id = ctx.get("intent_id")
         client_order_id = f"{ctx.trace_id}:shares:{ctx.event_id}"
         try:
             # Marketable limit off the LIVE ask (caps slippage; still fills at NBBO).
@@ -40,13 +41,35 @@ class SharesMarketSubmitter(Skill):
             order = PreparedOrder(action="BUY", quantity=qty, order_type="LMT",
                                   limit_price=limit, tif="DAY")
             trade = await self._gateway.place_order(contract, order, client_order_id)
+            # Write-ahead BEFORE waiting for the fill: a crash mid-fill then
+            # leaves a 'submitted'/'dispatched' row the reconciler can resolve
+            # against IB's open orders on restart.
+            await self._intents.update_execution_state(
+                intent_id, "submitted", outbox_status="dispatched",
+                broker_order_ref=str(trade.order.orderId),
+                order_submitted_at=datetime.now(timezone.utc).isoformat(),
+            )
             fill = await self._gateway.wait_fill(trade, timeout=self._timeout)
         except IBGatewayUnavailable as exc:
             return SkillResult(status="fail", reason=f"broker_unavailable:{exc}")
 
+        if fill.status == FillStatus.REJECTED:
+            # Distinct from a timeout: a hard broker rejection -> DLQ.
+            await self._intents.update_execution_state(
+                intent_id, "failed", outbox_status="failed",
+                dlq_reason=f"broker_rejected:{fill.last_status}",
+            )
+            return SkillResult(status="fail",
+                               reason=f"shares_rejected:{fill.last_status}")
+
         # Anything with filled_qty>0 is a real (possibly partial) position we own.
         if fill.filled_qty <= 0:
             await self._cancel_residual(trade, fill)
+            await self._intents.update_execution_state(
+                intent_id, "cancelled", outbox_status="cancelled",
+                cancel_reason="fill_timeout",
+                cancelled_at=datetime.now(timezone.utc).isoformat(),
+            )
             return SkillResult(status="fail",
                                reason=f"shares_not_filled:{fill.last_status}")
 
@@ -57,7 +80,6 @@ class SharesMarketSubmitter(Skill):
             logger.warning("shares partial fill %s: %d/%d filled, residual cancelled",
                            client_order_id, fill.filled_qty, fill.submitted_qty)
 
-        intent_id = ctx.get("intent_id")
         await self._intents.update_fill(
             intent_id, fill_price=fill.avg_fill_price or 0.0,
             fill_qty=fill.filled_qty, broker_order_ref=fill.broker_order_id,

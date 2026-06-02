@@ -19,6 +19,7 @@ def submitter_deps():
     ))
     intent_store = MagicMock()
     intent_store.update_fill = AsyncMock()
+    intent_store.update_execution_state = AsyncMock()
     trim_store = MagicMock()
     trim_store.arm = AsyncMock()
     return gw, intent_store, trim_store
@@ -144,6 +145,53 @@ async def test_timed_out_partial_cancels_residual_and_arms_trims(submitter_deps)
 
 
 @pytest.mark.asyncio
+async def test_write_ahead_submitted_before_fill(submitter_deps):
+    # Crash-recovery: the submitter must persist a 'submitted'/'dispatched'
+    # write-ahead (with broker_order_ref) BEFORE waiting for the fill, so a
+    # crash mid-fill leaves a reconcilable row.
+    gw, intent_store, trim_store = submitter_deps
+    sub = _make_submitter(gw, intent_store, trim_store, rungs=[])
+    contract = BrokerContractRef(symbol="AAPL", sec_type="STK",
+                                 exchange="SMART", currency="USD", qualified=True)
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({"intent_id": "intent-1", "ticker": "AAPL",
+                "side": "long", "quantity": 100, "selected_contract": contract})
+    await sub.run(ctx)
+    wa = intent_store.update_execution_state.call_args_list[0]
+    assert wa.args[1] == "submitted"
+    assert wa.kwargs["outbox_status"] == "dispatched"
+    assert wa.kwargs["broker_order_ref"] is not None
+    assert wa.kwargs["order_submitted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_rejected_order_marks_failed_dlq(submitter_deps):
+    gw, intent_store, trim_store = submitter_deps
+    gw.wait_fill = AsyncMock(return_value=FillResult(
+        status=FillStatus.REJECTED, broker_order_id="o1", perm_id=1,
+        submitted_qty=100, filled_qty=0, remaining_qty=100,
+        avg_fill_price=None, last_status="Inactive",
+        status_timestamp="2026-05-05T13:30:00Z",
+    ))
+    sub = _make_submitter(gw, intent_store, trim_store, rungs=[(1, 0.05, 0.40)])
+    contract = BrokerContractRef(symbol="AAPL", sec_type="STK",
+                                 exchange="SMART", currency="USD", qualified=True)
+    ctx = Context(trace_id="t1", event_id="e1")
+    ctx.update({"intent_id": "intent-1", "ticker": "AAPL",
+                "side": "long", "quantity": 100, "selected_contract": contract})
+    result = await sub.run(ctx)
+    assert result.status == "fail"
+    assert "shares_rejected" in (result.reason or "")
+    # Last state write marks the DLQ row.
+    failed = intent_store.update_execution_state.call_args_list[-1]
+    assert failed.args[1] == "failed"
+    assert failed.kwargs["dlq_reason"] is not None
+    assert failed.kwargs["outbox_status"] == "failed"
+    trim_store.arm.assert_not_awaited()
+    gw.cancel_order.assert_not_awaited()  # a rejected order has no residual
+
+
+@pytest.mark.asyncio
 async def test_zero_fill_timeout_cancels_residual_and_fails(submitter_deps):
     gw, intent_store, trim_store = submitter_deps
     gw.wait_fill = AsyncMock(return_value=FillResult(
@@ -164,3 +212,8 @@ async def test_zero_fill_timeout_cancels_residual_and_fails(submitter_deps):
     gw.cancel_order.assert_awaited_once()
     trim_store.arm.assert_not_awaited()
     intent_store.update_fill.assert_not_awaited()
+    # Timeout is distinct from rejection: cancelled, not failed/DLQ.
+    cancelled = intent_store.update_execution_state.call_args_list[-1]
+    assert cancelled.args[1] == "cancelled"
+    assert cancelled.kwargs["cancel_reason"] == "fill_timeout"
+    assert cancelled.kwargs["outbox_status"] == "cancelled"

@@ -120,8 +120,14 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     digest_skill = phase1_chain[-1]
 
     async def on_fail(ctx: Context, reason: str) -> None:
+        from skills.posttrade.telegram_digest import TelegramDigest
         await audit_writer.write(ctx, "failed")
-        await digest_skill.send_error_digest(ctx, reason)
+        # A hard broker rejection gets a distinct alert (it lands in the DLQ);
+        # everything else is the generic error digest.
+        if TelegramDigest.is_order_rejected(reason):
+            await digest_skill.send_order_rejected_alert(ctx, reason)
+        else:
+            await digest_skill.send_error_digest(ctx, reason)
 
     async def on_skip(ctx: Context, reason: str) -> None:
         await audit_writer.write(ctx, "skipped")
