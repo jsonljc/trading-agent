@@ -33,6 +33,14 @@ class PositionExitStore:
         await self._conn.commit()
         return cur.rowcount > 0
 
+    async def release_sell_event(self, fingerprint: str) -> None:
+        """Undo a claim when NOTHING was sold (e.g. broker down on the first
+        order) so a repost can retry. Only safe to call when sold_qty == 0 for
+        this event — otherwise the sold portion would be re-sold."""
+        await self._conn.execute(
+            "DELETE FROM sell_event_claims WHERE fingerprint=?", (fingerprint,))
+        await self._conn.commit()
+
     async def record_exit(self, *, fingerprint: str, event_id: str | None,
                           intent_id: str, channel: str | None, ticker: str | None,
                           scope: str, requested_qty: int, sold_qty: int,
