@@ -123,6 +123,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
     from skills.execution.execution_reconciler import ExecutionReconciler
 
     trim_store = TrimLadderStore(conn)
+    from infra.storage.position_exit_store import PositionExitStore
+    exits_store = PositionExitStore(conn)
 
     phase1_chain = build_phase1_chain(
         policy, idempotency_store, telegram,
@@ -130,6 +132,8 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         trader_registry=trader_registry,
         classification_log_store=classification_log_store,
         llm_classifier=llm_classifier,
+        trade_intent_store=trade_intent_store,
+        exits_store=exits_store,
     )
     phase2b_chain = build_phase2b_execution_chain(
         policy, execution_store, gateway, trade_intent_store, trim_store=trim_store
@@ -150,12 +154,25 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
             await digest_skill.send_error_digest(ctx, reason)
 
     async def on_skip(ctx: Context, reason: str) -> None:
+        from skills.posttrade.telegram_digest import TelegramDigest
+        # A followed sell executed a REAL order; do NOT audit it as 'skipped'
+        # (that would corrupt P&L/fill-rate analytics) — record it distinctly
+        # and send the sell digest.
+        if reason == "sell_followed":
+            await audit_writer.write(ctx, "sell_followed")
+            await digest_skill.send_sell_digest(ctx)
+            return
         await audit_writer.write(ctx, "skipped")
+        # Informational alerts for sell outcomes that did NOT execute.
+        if reason in ("no_open_position", "sell_outside_rth") or \
+                reason.startswith(("sell_broker_unavailable", "sell_partial_broker")):
+            await digest_skill.send_missed_signal_alert(
+                ctx, f"sell not executed: {reason}")
+            return
         # Surface broker-unavailable skips on actionable signals — without this
         # the agent silently drops every fired classification while IB is down
         # (see ADEA on 2026-05-11: gateway dropped 19:45 ET, ADEA HIGH fires
         # at 20:06 and 20:47 dropped with reason 'circuit open').
-        from skills.posttrade.telegram_digest import TelegramDigest
         if TelegramDigest.is_broker_unavailable_skip(ctx, reason):
             await digest_skill.send_missed_signal_alert(ctx, reason)
         elif reason == "kill_switch_engaged" and ctx.get("bucket") in ("HIGH", "LOW"):

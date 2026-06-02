@@ -119,6 +119,23 @@ class TelegramDigest(Skill):
         except Exception as exc:
             logger.error("Error digest delivery failed: %s", exc)
 
+    async def send_sell_digest(self, ctx: Context) -> None:
+        import html
+        ticker = html.escape(ctx.get("sell_ticker") or ctx.get("ticker") or "?")
+        qty = ctx.get("sell_total_sold_qty")
+        scope = html.escape(ctx.get("sell_scope") or "?")
+        trader = html.escape(ctx.get("trader_handle") or ctx.get("channel") or "?")
+        text = (
+            f"✅ <b>FOLLOWED SELL</b>\n\n"
+            f"Trader: {trader}\n"
+            f"Ticker: <b>{ticker}</b> — sold {qty} shares ({scope})\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Sell digest delivery failed: %s", exc)
+
     async def send_fill_digest(self, ctx: Context) -> None:
         import html
         ticker = html.escape(ctx.get("ticker", "?"))
