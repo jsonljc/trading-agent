@@ -40,6 +40,19 @@ regression run fully **deterministic and offline** — no Anthropic call. All
 tests use that recorded/fake path; the `--live-llm` path is never exercised in
 tests or autonomous development.
 
+`responses_sample.jsonl` is a committed sample cache (an *ideal* oracle: each
+recorded response equals ground truth) covering only the messages that reach
+the LLM — entries that hit the deterministic stated-size shortcut and sells
+with no exit verb are prefiltered and need no recording. It lets you run a
+deterministic eval immediately:
+
+```
+bin/eval_classifiers.py --responses tests/fixtures/classifier_eval/responses_sample.jsonl
+```
+
+To measure real model accuracy, run with `--live-llm` and record those raw
+responses into a new cache file.
+
 ## Authoring note
 
 These messages are **freshly written**, not copied from the traders' own
