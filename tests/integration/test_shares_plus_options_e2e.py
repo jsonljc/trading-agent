@@ -112,7 +112,11 @@ async def test_high_signal_fires_shares_then_options():
     candidate = _make_option_candidate("AAPL", strike=95.0)
 
     gw = MagicMock()
-    gw.get_quote = AsyncMock(side_effect=[100.0, 100.0, 101.0])
+    # get_quote sequence: ReferencePriceCapture(100) -> OrderSizer equity(100)
+    #   -> SharesMarketSubmitter live ask(100) -> OptionsChaseGuard(101).
+    gw.get_quote = AsyncMock(side_effect=[100.0, 100.0, 100.0, 101.0])
+    gw.get_option_ask = AsyncMock(return_value=(5.0, 0.0))
+    gw.cancel_order = AsyncMock(return_value=True)
     gw.qualify_equity = AsyncMock(return_value=equity_ref)
     gw.get_account_summary = AsyncMock(return_value=AccountSummary(
         buying_power=200_000.0, net_liquidation=100_000.0, currency="USD",
@@ -262,8 +266,11 @@ async def test_options_chase_guard_skips_when_price_chased():
     )
 
     gw = MagicMock()
-    # reference = 100, after-shares quote = 115 (15% > 10% threshold → skip options)
-    gw.get_quote = AsyncMock(side_effect=[100.0, 100.0, 115.0])
+    # reference(100) -> OrderSizer equity(100) -> SharesMarketSubmitter live ask(100)
+    #   -> OptionsChaseGuard(115): 15% > 10% threshold -> skip options.
+    gw.get_quote = AsyncMock(side_effect=[100.0, 100.0, 100.0, 115.0])
+    gw.get_option_ask = AsyncMock(return_value=(5.0, 0.0))
+    gw.cancel_order = AsyncMock(return_value=True)
     gw.qualify_equity = AsyncMock(return_value=equity_ref)
     gw.get_account_summary = AsyncMock(return_value=AccountSummary(
         buying_power=200_000.0, net_liquidation=100_000.0, currency="USD",

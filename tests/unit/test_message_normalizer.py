@@ -65,3 +65,17 @@ async def test_normalizer_sets_intent_timestamp():
     ctx = make_ctx("Long $AVEX")
     result = await skill.run(ctx)
     assert result.updates["intent_timestamp"] == "2026-04-18T10:00:00Z"
+
+
+async def test_compute_fingerprint_helper_matches_skill_and_normalizes_whitespace():
+    from skills.signal.message_normalizer import compute_fingerprint
+    fp_a = compute_fingerprint("mystic", "Mystic", "long  $SPY   now")
+    fp_b = compute_fingerprint("mystic", "Mystic", "long $SPY now")
+    assert fp_a == fp_b
+    assert len(fp_a) == 16
+    # The helper must produce the SAME value the skill writes, so the
+    # signal_events row matches the idempotency fingerprint.
+    skill = MessageNormalizer(make_policy())
+    ctx = make_ctx("long  $SPY   now", channel="mystic", author="Mystic")
+    result = await skill.run(ctx)
+    assert result.updates["message_fingerprint"] == fp_a

@@ -48,6 +48,63 @@ class TelegramDigest(Skill):
             f"<code>trace: {ctx.trace_id}</code>"
         )
 
+    # Markers in skip reasons that indicate the broker (IB) was unreachable.
+    # When any of these appear on an actionable bucket (HIGH/LOW) skip, the
+    # signal is silently dropped — we surface it via send_missed_signal_alert.
+    _BROKER_UNAVAILABLE_MARKERS = (
+        "circuit open",
+        "broker_unavailable",
+        "could not be validated",
+    )
+
+    @classmethod
+    def is_broker_unavailable_skip(cls, ctx: Context, reason: str) -> bool:
+        bucket = ctx.get("bucket")
+        if bucket not in ("HIGH", "LOW"):
+            return False
+        return any(m in reason for m in cls._BROKER_UNAVAILABLE_MARKERS)
+
+    @staticmethod
+    def is_order_rejected(reason: str) -> bool:
+        """A hard broker rejection (distinct from a fill timeout / broker-down)."""
+        return (reason.startswith(("shares_rejected", "options_rejected"))
+                or "broker_rejected" in reason)
+
+    async def send_order_rejected_alert(self, ctx: Context, reason: str) -> None:
+        import html
+        ticker = html.escape(ctx.get("ticker") or "?")
+        side = html.escape(ctx.get("side") or "?")
+        text = (
+            f"🛑 <b>ORDER REJECTED</b>\n\n"
+            f"Ticker: <b>{ticker}</b> {side}\n"
+            f"Reason: {html.escape(reason)}\n"
+            f"The broker rejected the order (not a timeout) — it is in the DLQ "
+            f"for review; nothing was filled.\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Order-rejected alert delivery failed: %s", exc)
+
+    async def send_missed_signal_alert(self, ctx: Context, reason: str) -> None:
+        import html
+        ticker = html.escape(ctx.get("ticker") or "?")
+        side = html.escape(ctx.get("side") or "?")
+        trader = html.escape(ctx.get("trader_handle") or "?")
+        bucket = html.escape(ctx.get("bucket") or "?")
+        text = (
+            f"⚠️ <b>MISSED SIGNAL</b>\n\n"
+            f"Trader: {trader}\n"
+            f"Ticker: <b>{ticker}</b> {side} ({bucket})\n"
+            f"Reason: {html.escape(reason)}\n"
+            f"<code>trace: {ctx.trace_id}</code>"
+        )
+        try:
+            await self._client.send_message(text)
+        except Exception as exc:
+            logger.error("Missed-signal alert delivery failed: %s", exc)
+
     async def send_error_digest(self, ctx: Context, reason: str) -> None:
         import html
         text = (

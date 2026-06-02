@@ -28,3 +28,9 @@ conviction_examples:
   - msg: "OPEN AMBQ (edge-AI theme): Fabless ultra-low power MCU/SoC vendor. (1) a defensible subthreshold-voltage IP moat, 2x-5x lower power; (2) Google, Garmin, Whoop wearable platform exposure with disclosed ramp into mass production in 2026; (3) optionality on smart glasses, hearing aids, cardiac monitors. Looks ready to retest IPO high."
     bucket: HIGH
     why: "structured multi-thesis OPEN with named catalysts and themes — high-conviction entry"
+  - msg: "Not exactly sure what drove the intraday sell-off on PSIX but if people are pointing at this Bronstein LLC complaint, let me address it. This has been a known overhang ... five firms file similar suits in 60 days, it is a herd phenomenon. The claims themselves are weak as fraud claims ... If GM recovered off the 21.9% Q4 trough, we should see a reversal."
+    bucket: SKIP
+    why: "follow-up commentary defending an existing position (addressing FUD/lawsuit news) — analysis of an already-open trade, not a new entry"
+  - msg: "AVAV is approaching its 50-month moving average around $160. This is a bottom-fishing trade, so it may take time to base and move. But I like the risk/reward here and will hold through some volatility."
+    bucket: SKIP
+    why: "setup/watchlist commentary describing the technical level and how to think about it — no explicit OPEN/Added/position-size language indicating a fresh entry was taken"

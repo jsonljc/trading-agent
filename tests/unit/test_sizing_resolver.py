@@ -49,7 +49,7 @@ async def test_per_channel_low():
 async def test_default_for_unknown_channel():
     skill = SizingResolver(_policy_with_sizing())
     ctx = Context(trace_id="t1", event_id="e1")
-    ctx.update({"channel": "urkel", "bucket": "HIGH"})
+    ctx.update({"channel": "unknown_channel", "bucket": "HIGH"})
     await skill.run(ctx)
     assert ctx.get("shares_pct") == 0.10
     assert ctx.get("options_pct") == 0.05

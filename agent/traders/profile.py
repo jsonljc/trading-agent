@@ -28,6 +28,7 @@ class TraderProfile:
     classifier_model: str
     availability_phrases: tuple[str, ...]
     conviction_examples: tuple[ConvictionExample, ...]
+    size_floor: str | None = None  # "HIGH" -> every actionable entry sized HIGH
 
 
 def load_profile(path: Path) -> TraderProfile:
@@ -43,6 +44,10 @@ def load_profile(path: Path) -> TraderProfile:
         if e["bucket"] not in VALID_BUCKETS:
             raise ValueError(f"invalid bucket {e['bucket']!r} in {path}")
         examples.append(ConvictionExample(msg=e["msg"], bucket=e["bucket"], why=e.get("why", "")))
+    size_floor = raw.get("size_floor")
+    if size_floor is not None and size_floor != "HIGH":
+        raise ValueError(
+            f"invalid size_floor {size_floor!r} in {path} (only 'HIGH' is supported)")
     return TraderProfile(
         handle=raw["handle"],
         display_name=raw["display_name"],
@@ -56,6 +61,7 @@ def load_profile(path: Path) -> TraderProfile:
         classifier_model=raw.get("classifier_model", "claude-haiku-4-5"),
         availability_phrases=tuple(raw.get("availability_phrases", [])),
         conviction_examples=tuple(examples),
+        size_floor=size_floor,
     )
 
 

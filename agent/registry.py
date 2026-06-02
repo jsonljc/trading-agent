@@ -5,10 +5,10 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
                        trader_registry=None, classification_log_store=None,
                        llm_classifier=None) -> list:
     from skills.signal.message_normalizer import MessageNormalizer
-    from skills.signal.desktop_reader import DesktopReader
     from skills.signal.trader_router import TraderRouter
     from skills.signal.trader_classifier import TraderClassifier
     from skills.signal.classification_logger import ClassificationLogger
+    from skills.signal.same_day_dedup_gate import SameDayDedupGate
     from skills.signal.entry_skip_gate import EntrySkipGate
     from skills.risk.idempotency_check import IdempotencyCheck
     from skills.posttrade.telegram_digest import TelegramDigest
@@ -23,10 +23,11 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
     digest = TelegramDigest(telegram_client, mode="signal_only")
     skills_list: list[Skill] = [
         MessageNormalizer(policy),
-        DesktopReader(policy),
         TraderRouter(trader_registry),
         TraderClassifier(trader_registry, llm_classifier),
         ClassificationLogger(classification_log_store),
+        # Dedup BEFORE EntrySkipGate so duplicates are logged then halted
+        SameDayDedupGate(classification_log_store),
         EntrySkipGate(),                            # terminate non-actionable
         IdempotencyCheck(policy, idempotency_store),
     ]
@@ -42,6 +43,7 @@ def build_phase1_chain(policy, idempotency_store, telegram_client, gateway=None,
 def build_phase2b_execution_chain(policy, execution_store, gateway,
                                    trade_intent_store=None,
                                    trim_store=None) -> list:
+    from skills.execution.kill_switch_guard import KillSwitchGuard
     from skills.execution.trade_intent_writer import TradeIntentWriter
     from skills.execution.channel_policy_guard import ChannelPolicyGuard
     from skills.execution.cooldown_guard import CooldownGuard
@@ -69,7 +71,9 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
     rungs = [(i + 1, r.threshold_pct, r.trim_pct)
              for i, r in enumerate(policy.execution.trim_ladder.rungs)]
 
-    return intent_guards + [
+    return [
+        KillSwitchGuard(policy.execution.kill_switch_file),
+    ] + intent_guards + [
         ExecutionEligibilityGuard(policy),
         RthEntryGuard(),
         ReferencePriceCapture(gateway),
@@ -82,6 +86,7 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
             gateway, trade_intent_store, trim_store,
             fill_timeout=policy.execution.fill_wait_timeout_seconds,
             trim_rungs=rungs,
+            slippage_cap_pct=policy.execution.shares_slippage_cap_pct,
         ),
 
         # Options sub-chain (gated)
@@ -94,5 +99,6 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
         OptionsMarketSubmitter(
             gateway, trade_intent_store,
             fill_timeout=policy.execution.fill_wait_timeout_seconds,
+            slippage_cap_pct=policy.execution.options_slippage_cap_pct,
         ),
     ]

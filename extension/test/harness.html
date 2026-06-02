@@ -36,6 +36,82 @@
   <li id="not-a-message">irrelevant</li>
 </template>
 
+<template id="case-grouped-second">
+  <ol>
+    <li id="chat-messages-111111-100">
+      <div>
+        <span class="username-h_Y3Us">The Pup of Wall St</span>
+        <time datetime="2026-05-08T14:46:00.000Z">2:46 PM</time>
+        <div id="message-content-100">OPEN TSLA 500C 6/18</div>
+      </div>
+    </li>
+    <li id="chat-messages-111111-101">
+      <div>
+        <time datetime="2026-05-08T14:49:00.000Z">2:49 PM</time>
+        <div id="message-content-101">OPEN QCOM 250C 5/15 FILL: $3.2</div>
+      </div>
+    </li>
+  </ol>
+</template>
+
+<template id="case-grouped-across-divider">
+  <ol>
+    <li id="chat-messages-222222-200">
+      <div>
+        <span class="username-x">Urkel</span>
+        <time datetime="2026-05-08T13:56:00.000Z">1:56 PM</time>
+        <div id="message-content-200">SWING ADD MU</div>
+      </div>
+    </li>
+    <li class="divider-some-hash"><span>May 8, 2026</span></li>
+    <li id="chat-messages-222222-201">
+      <div>
+        <time datetime="2026-05-08T14:03:00.000Z">2:03 PM</time>
+        <div id="message-content-201">Mixed bag out there for swings</div>
+      </div>
+    </li>
+  </ol>
+</template>
+
+<template id="case-cluster-boundary">
+  <!-- Pup cluster, then Naz cluster. Naz's second message must NOT
+       inherit Pup's author. -->
+  <ol>
+    <li id="chat-messages-333333-300">
+      <div>
+        <span class="username-x">The Pup of Wall St</span>
+        <time datetime="2026-05-08T15:00:00.000Z">3:00 PM</time>
+        <div id="message-content-300">QCOM nHOD</div>
+      </div>
+    </li>
+    <li id="chat-messages-333333-301">
+      <div>
+        <span class="username-x">Naz</span>
+        <time datetime="2026-05-08T15:01:00.000Z">3:01 PM</time>
+        <div id="message-content-301">interesting</div>
+      </div>
+    </li>
+    <li id="chat-messages-333333-302">
+      <div>
+        <time datetime="2026-05-08T15:02:00.000Z">3:02 PM</time>
+        <div id="message-content-302">following</div>
+      </div>
+    </li>
+  </ol>
+</template>
+
+<template id="case-top-of-viewport">
+  <!-- No prior sibling with a username (Discord lazy-rendered above the fold). -->
+  <ol>
+    <li id="chat-messages-444444-400">
+      <div>
+        <time datetime="2026-05-08T16:00:00.000Z">4:00 PM</time>
+        <div id="message-content-400">orphaned message</div>
+      </div>
+    </li>
+  </ol>
+</template>
+
 <script>
   function check(name, cond) {
     const div = document.createElement("div");
@@ -62,4 +138,35 @@
   const d = DiscordExtract.channelIdFromUrl(
     "https://discord.com/channels/123/456");
   check("url parse channel_id", d.channel_id === "456" && d.server_id === "123");
+
+  function loadList(id) {
+    const ol = document.getElementById(id).content.firstElementChild.cloneNode(true);
+    return ol;  // caller picks the <li> by index
+  }
+
+  // Grouped second message: must inherit author from prior sibling
+  const g = loadList("case-grouped-second");
+  const second = DiscordExtract.extractMessage(g.children[1]);
+  check("grouped second-message author resolved",
+        second && second.author === "The Pup of Wall St");
+  check("grouped second-message id intact",
+        second && second.message_id === "101");
+
+  // Grouped across a divider element
+  const gd = loadList("case-grouped-across-divider");
+  const continuationAcrossDivider = DiscordExtract.extractMessage(gd.children[2]);
+  check("author resolved across non-message sibling (divider)",
+        continuationAcrossDivider && continuationAcrossDivider.author === "Urkel");
+
+  // Cluster boundary: Naz continuation must inherit Naz, NOT prior cluster
+  const cb = loadList("case-cluster-boundary");
+  const nazContinuation = DiscordExtract.extractMessage(cb.children[2]);
+  check("cluster-boundary attribution stays with new author",
+        nazContinuation && nazContinuation.author === "Naz");
+
+  // Top of viewport: no prior sibling, accept empty author (current fallthrough)
+  const t = loadList("case-top-of-viewport");
+  const orphan = DiscordExtract.extractMessage(t.children[0]);
+  check("orphan at top of viewport returns empty author (acceptable)",
+        orphan && orphan.author === "");
 </script>

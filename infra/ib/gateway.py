@@ -49,11 +49,18 @@ class _CircuitBreaker:
             raise IBGatewayUnavailable("circuit open")
 
 
-_RECONNECT_BACKOFF_SECONDS = (5, 10, 30, 60, 60)
+# Reconnect backoff ramps up then plateaus at the last value forever.
+# Indefinite retry — we never give up. Operators are alerted via the
+# on_reconnect_failing callback at elapsed-time thresholds (see below).
+_RECONNECT_RAMP_SECONDS = (5, 10, 30, 60)
+_RECONNECT_PLATEAU_SECONDS = 60
+# Minutes-elapsed at which on_reconnect_failing fires (then every hour after).
+_RECONNECT_ALERT_THRESHOLDS_MINUTES = (5, 15, 30, 60)
 
 
 class IBGateway:
-    def __init__(self, policy, on_disconnect=None, on_reconnect=None) -> None:
+    def __init__(self, policy, on_disconnect=None, on_reconnect=None,
+                 on_reconnect_failing=None) -> None:
         self._policy = policy
         self._ib = None
         self._connected = False
@@ -62,6 +69,9 @@ class IBGateway:
         self._write_breaker = _CircuitBreaker()
         self._on_disconnect = on_disconnect  # async callable() — fired once per drop
         self._on_reconnect = on_reconnect    # async callable() — fired once per recovery
+        # async callable(elapsed_minutes: int) — escalating alert while reconnect
+        # keeps failing past the thresholds above.
+        self._on_reconnect_failing = on_reconnect_failing
         self._reconnect_task: asyncio.Task | None = None
         self._intentional_disconnect = False
 
@@ -70,8 +80,9 @@ class IBGateway:
         self._ib = IB()
         p = self._policy.ib_gateway
         await self._ib.connectAsync(p.host, p.port, clientId=p.client_id)
-        # Enable delayed market data (free tier fallback)
-        self._ib.reqMarketDataType(3)
+        # Market-data type from policy (default 3=delayed free tier; 1=live needs
+        # a paid subscription). Single knob so going live is config, not code.
+        self._ib.reqMarketDataType(p.market_data_type)
         accounts = self._ib.managedAccounts()
         self._account_id = accounts[0] if accounts else None
         self._connected = True
@@ -100,11 +111,18 @@ class IBGateway:
                 await self._on_disconnect()
             except Exception:
                 logger.exception("on_disconnect notifier failed")
-        for delay in _RECONNECT_BACKOFF_SECONDS:
+        started_at = time.monotonic()
+        alerted_at_minutes: set[int] = set()
+        attempt = 0
+        while True:
+            delay = (_RECONNECT_RAMP_SECONDS[attempt]
+                     if attempt < len(_RECONNECT_RAMP_SECONDS)
+                     else _RECONNECT_PLATEAU_SECONDS)
             await asyncio.sleep(delay)
+            attempt += 1
             try:
                 await self.connect()
-                logger.info("IB Gateway reconnect succeeded")
+                logger.info("IB Gateway reconnect succeeded after %d attempts", attempt)
                 if self._on_reconnect:
                     try:
                         await self._on_reconnect()
@@ -112,8 +130,31 @@ class IBGateway:
                         logger.exception("on_reconnect notifier failed")
                 return
             except Exception as exc:
-                logger.warning("Reconnect attempt failed: %s", exc)
-        logger.error("IB Gateway reconnect gave up after %d attempts", len(_RECONNECT_BACKOFF_SECONDS))
+                logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
+            await self._maybe_alert_reconnect_failing(started_at, alerted_at_minutes)
+
+    async def _maybe_alert_reconnect_failing(
+            self, started_at: float, alerted: set[int]) -> None:
+        if self._on_reconnect_failing is None:
+            return
+        elapsed_min = int((time.monotonic() - started_at) // 60)
+        # Threshold list = the ramp-up alerts plus every full hour after the
+        # last ramp threshold. Picking the *largest* unfired threshold keeps
+        # us from spamming when multiple thresholds get crossed during a single
+        # backoff sleep (e.g. machine slept).
+        thresholds = set(_RECONNECT_ALERT_THRESHOLDS_MINUTES)
+        last_ramp = max(_RECONNECT_ALERT_THRESHOLDS_MINUTES)
+        if elapsed_min > last_ramp:
+            thresholds.add((elapsed_min // 60) * 60)
+        candidates = [t for t in thresholds if t <= elapsed_min and t not in alerted]
+        if not candidates:
+            return
+        threshold = max(candidates)
+        alerted.add(threshold)
+        try:
+            await self._on_reconnect_failing(threshold)
+        except Exception:
+            logger.exception("on_reconnect_failing notifier failed")
 
     async def qualify(self, contract_ref: BrokerContractRef) -> BrokerContractRef:
         self._read_breaker.check()
@@ -194,14 +235,26 @@ class IBGateway:
                     bid = float(td.bid) if td.bid and td.bid == td.bid and td.bid > 0 else 0.0
                     ask = float(td.ask) if td.ask and td.ask == td.ask and td.ask > 0 else 0.0
                     mid = (bid + ask) / 2
-                    spread_pct = ((ask - bid) / ask) if ask > 0 else 1.0
+                    # Spread relative to MID (not ask) — the standard liquidity
+                    # measure. mid==0 (no two-sided quote) -> treat as max-wide.
+                    spread_pct = ((ask - bid) / mid) if mid > 0 else 1.0
                     ref = _from_ib_contract(q)
                     ref.qualified = True
                     expiry_fmt = f"{expiry[:4]}-{expiry[4:6]}-{expiry[6:]}"
+                    # NOTE: open interest needs generic tick 101 via a streaming
+                    # reqMktData; this plain reqTickersAsync snapshot does NOT
+                    # request it, so OI (and often volume) come back nan -> None
+                    # and ContractSelector's OI/volume gate is currently dormant
+                    # (it fails open, leaning on the mid-based spread gate). To
+                    # activate it, switch to reqMktData(genericTickList="100,101,
+                    # 104,106"). Tracked as a known limitation in the Phase C spec.
+                    oi_field = "putOpenInterest" if right == "P" else "callOpenInterest"
+                    oi = _safe_positive_int(getattr(td, oi_field, None))
+                    vol = _safe_positive_int(getattr(td, "volume", None))
                     return OptionCandidate(
                         symbol=ticker, expiry=expiry_fmt, strike=strike, right=right,
                         bid=bid, ask=ask, mid=mid, spread_pct=spread_pct,
-                        open_interest=None, volume=None,
+                        open_interest=oi, volume=vol,
                         multiplier=int(q.multiplier or 100), contract_ref=ref,
                     )
                 except Exception:
@@ -212,9 +265,9 @@ class IBGateway:
             ])
             candidates = [c for c in results if c is not None]
 
-            if len(candidates) < 2:
+            if len(candidates) < 1:
                 self._read_breaker._record_failure()
-                raise IBGatewayUnavailable("chain_lookup_insufficient_candidates")
+                raise IBGatewayUnavailable("chain_lookup_no_candidates")
 
             self._read_breaker._record_success()
             return candidates
@@ -346,6 +399,21 @@ class IBGateway:
             self._read_breaker._record_failure()
             raise IBGatewayUnavailable(f"get_open_orders failed: {exc}") from exc
 
+    async def get_positions(self) -> list:
+        """Live broker positions (for the reconciler's filled-while-down check)."""
+        self._read_breaker.check()
+        try:
+            if not self._ib:
+                return []
+            positions = self._ib.positions()
+            self._read_breaker._record_success()
+            return positions
+        except IBGatewayUnavailable:
+            raise
+        except Exception as exc:
+            self._read_breaker._record_failure()
+            raise IBGatewayUnavailable(f"get_positions failed: {exc}") from exc
+
     async def place_order(
         self,
         contract_ref: BrokerContractRef,
@@ -464,6 +532,20 @@ class IBGateway:
                 raise LiveTradingBlocked(
                     f"account {self._account_id} not in allowed paper prefixes {p.paper_account_prefixes}"
                 )
+
+
+def _safe_positive_int(val) -> int | None:
+    """Coerce an IB ticker field (OI/volume) to a positive int, else None.
+
+    Handles nan, non-numeric placeholders (MagicMock in tests / missing fields),
+    and non-positive sentinels — any of which mean 'unavailable'."""
+    if not isinstance(val, (int, float)):
+        return None
+    if val != val:  # nan
+        return None
+    if val <= 0:
+        return None
+    return int(val)
 
 
 def _to_ib_contract(ref: BrokerContractRef):

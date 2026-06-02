@@ -95,12 +95,18 @@ class TradeIntentStore:
         fill_price: float,
         fill_qty: int,
         execution_state: str = "filled",
+        broker_order_ref: str | None = None,
+        filled_at: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        # A recorded fill also confirms the outbox so the row drops out of the
+        # in-flight set the reconciler watches (get_pending_outbox).
         await self._conn.execute(
             "UPDATE trade_intents SET fill_price=?, fill_qty=?, execution_state=?, "
+            "filled_at=?, broker_order_ref=?, outbox_status='confirmed', "
             "updated_at=? WHERE intent_id=?",
-            (fill_price, fill_qty, execution_state, now, intent_id),
+            (fill_price, fill_qty, execution_state, filled_at or now,
+             broker_order_ref, now, intent_id),
         )
         await self._conn.commit()
 
@@ -153,6 +159,7 @@ class TradeIntentStore:
         fill_qty: int | None,
         execution_state: str,
         signal_received_at: str,
+        broker_order_ref: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         record = {
@@ -170,6 +177,8 @@ class TradeIntentStore:
             "fill_price": fill_price,
             "fill_qty": fill_qty,
             "execution_state": execution_state,
+            "broker_order_ref": broker_order_ref,
+            "filled_at": now if execution_state == "filled" else None,
             "policy_state": "approved",
             "signal_received_at": signal_received_at,
             "intent_created_at": now,

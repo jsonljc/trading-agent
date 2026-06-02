@@ -42,7 +42,9 @@ class DedupePolicy(BaseModel):
 
 class PricingGuards(BaseModel):
     min_bid: float
-    max_spread_pct: float
+    max_spread_pct: float            # (ask-bid)/mid ceiling for the options leg
+    min_open_interest: int = 100     # reject when OI is present and below this
+    min_volume: int = 0              # same-day volume floor (0 = off until live data)
 
 
 class ModelsConfig(BaseModel):
@@ -66,6 +68,11 @@ class IBGatewayPolicy(BaseModel):
     client_id: int = 1
     mode: str = "paper"
     paper_account_prefixes: list[str] = ["DU"]
+    # IB market-data type: 1=live (needs a paid subscription), 2=frozen,
+    # 3=delayed (free, ~15min), 4=delayed-frozen. Default delayed: every price
+    # decision currently runs on this. Flip to 1 only after subscribing (costs
+    # money — an operator decision), so it is a config flag, not a code change.
+    market_data_type: int = 3
 
     @field_validator("mode")
     @classmethod
@@ -107,6 +114,17 @@ class ExecutionPolicy(BaseModel):
     # (dead — PriceWalker bypassed by MKT chain)
     margin_multiplier: float = 2.0
     options_chase_threshold_pct: float = 0.10
+    # Marketable-limit slippage caps: limit = live_ask * (1 + cap). Options
+    # spreads are wide, so the options cap is looser than the shares cap.
+    # Bounded to [0, 0.5): a misconfigured cap >= 1 would yield a non-positive
+    # sell limit / runaway buy limit.
+    options_slippage_cap_pct: float = Field(default=0.05, ge=0.0, lt=0.5)
+    shares_slippage_cap_pct: float = Field(default=0.01, ge=0.0, lt=0.5)
+    # Operator emergency stop: `touch` this file to halt NEW entries instantly.
+    kill_switch_file: str = "data/KILL"
+    # External dead-man's-switch (healthchecks.io-style). None = disabled.
+    heartbeat_url: str | None = None
+    heartbeat_interval_seconds: int = 60
     exit_poll_interval_seconds: int = 2
     trim_ladder: TrimLadderConfig = TrimLadderConfig(rungs=[
         TrimRung(threshold_pct=0.05, trim_pct=0.40),

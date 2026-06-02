@@ -70,9 +70,14 @@ class OrderSizer(Skill):
         reason = (f"{instrument_type} pct={size_pct:.4f} of "
                   f"NetLiq=${account.net_liquidation:,.0f} × {self._margin_multiplier}")
         logger.info("OrderSizer: qty=%d notional=%.2f (%s)", quantity, notional, reason)
-        return SkillResult(status="success", updates={
+        updates = {
             "quantity": quantity,
             "notional_estimate": notional,
             "sizing_reason": reason,
             "capped_by": None,
-        })
+        }
+        if instrument_type == "option":
+            # Cached ask; OptionsMarketSubmitter prefers a fresh live ask but
+            # falls back to this when the live quote is missing (delayed data).
+            updates["option_ask"] = ask
+        return SkillResult(status="success", updates=updates)

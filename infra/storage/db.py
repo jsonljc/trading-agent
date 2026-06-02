@@ -1,3 +1,4 @@
+import os
 import aiosqlite
 
 SCHEMA = """
@@ -174,10 +175,16 @@ CREATE TABLE IF NOT EXISTS classification_log (
     size_source TEXT NOT NULL,
     action_taken TEXT NOT NULL,
     reason TEXT,
+    ticker TEXT,
+    side TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_classification_log_trader_time
     ON classification_log(trader_handle, created_at);
+-- idx_classification_log_dedup on (trader_handle, ticker, side, action_taken,
+-- created_at) is created in _migrate() AFTER the ticker/side columns are
+-- added — putting it here breaks bootstrap on legacy DBs whose pre-existing
+-- table lacks those columns (CREATE TABLE IF NOT EXISTS is a no-op).
 
 CREATE TABLE IF NOT EXISTS trader_examples_pending (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,10 +213,38 @@ async def get_connection(db_path: str) -> aiosqlite.Connection:
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA synchronous=NORMAL")
     await conn.execute("PRAGMA foreign_keys=ON")
+    # Explicit + extra headroom over the sqlite connect() default of 5000ms, so a
+    # second connection (audit/promote script) during a live trade retries
+    # rather than erroring instantly with "database is locked".
+    await conn.execute("PRAGMA busy_timeout=10000")
     await conn.executescript(SCHEMA)
     await _migrate(conn)
     await conn.commit()
     return conn
+
+
+async def check_integrity(conn: aiosqlite.Connection) -> str:
+    """Run PRAGMA integrity_check. Returns 'ok' when the database is healthy,
+    otherwise the first reported problem. Cheap insurance against silent
+    corruption (a torn WAL after an unclean shutdown) going unnoticed."""
+    async with conn.execute("PRAGMA integrity_check") as cur:
+        row = await cur.fetchone()
+    return row[0] if row else "unknown"
+
+
+async def backup_database(conn: aiosqlite.Connection, dest_path: str) -> str:
+    """Write a consistent snapshot to dest_path via VACUUM INTO (online, no
+    locking of writers). dest_path must not already exist. Returns dest_path.
+
+    Intended for an off-machine destination (synced dir / external mount) so a
+    disk loss does not take the trade ledger with it."""
+    parent = os.path.dirname(dest_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    # VACUUM cannot run inside a transaction — settle any pending work first.
+    await conn.commit()
+    await conn.execute("VACUUM INTO ?", (dest_path,))
+    return dest_path
 
 
 async def _migrate(conn: aiosqlite.Connection) -> None:
@@ -217,6 +252,16 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     CREATE TABLE IF NOT EXISTS does not patch existing tables."""
     await _add_column_if_missing(conn, "trade_intents", "partial_execution_reason", "TEXT")
     await _add_column_if_missing(conn, "trade_intent_trims", "fire_started_at", "TEXT")
+    await _add_column_if_missing(conn, "trade_intents", "fill_qty", "INTEGER")
+    await _add_column_if_missing(conn, "trade_intents", "parent_intent_id", "TEXT")
+    # SameDayDedupGate queries by (trader, ticker, side) — denormalize from
+    # the JSON blob so we can index it.
+    await _add_column_if_missing(conn, "classification_log", "ticker", "TEXT")
+    await _add_column_if_missing(conn, "classification_log", "side", "TEXT")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_classification_log_dedup "
+        "ON classification_log(trader_handle, ticker, side, action_taken, created_at)"
+    )
 
 
 async def _add_column_if_missing(conn: aiosqlite.Connection, table: str,

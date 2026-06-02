@@ -39,6 +39,8 @@ class ClassificationLogger(Skill):
                 size_pct=size_pct, size_source=size_source,
                 action_taken=action_taken,
                 reason=ctx.get("classifier_reason", ""),
+                ticker=ctx.get("ticker"),
+                side=ctx.get("side"),
             )
         except Exception as exc:
             logger.exception("classification_logger failed: %s", exc)
