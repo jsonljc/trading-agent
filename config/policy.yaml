@@ -88,6 +88,6 @@ execution:
 discord_extension:
   forwarder_port: 9876
   channel_id_map:
-    "1229546005788098580": stocktalkweekly
+    "1229546005788098580": stocktalkweekly   # Discord channel "live-notes-portfolio" (renamed; trader still STW)
     "1217309136681832540": mystic
-    "1248378121451733083": wallstengine
+    "1248378121451733083": wallstengine      # Discord channel "wall-st-engine"
