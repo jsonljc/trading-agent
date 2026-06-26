@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """Silent-failure watchdog for the trading agent.
 
-Pages the user via Telegram if, during US Regular Trading Hours, the
-agent is loaded but no execution_audit_log row has been written in the
-recent window. Designed to be invoked every few minutes by launchd.
+Pages the user via Telegram, during the active trading window, if:
+  * the agent is not running (no launchd PID); or
+  * any TRACKED Discord channel's capture has gone silent — its per-channel
+    liveness beacon (written by the extension forwarder) is older than
+    CHANNEL_STALE_MIN. This catches a single channel's capture dying even
+    while other channels keep feeding, and distinguishes "trader went quiet"
+    (beacon still fresh) from "that channel's capture died" (beacon stale); or
+  * (fallback, only when the liveness file is unavailable) no
+    execution_audit_log row has been written in the recent window.
+
+The active window spans PREMARKET -> close, because the system trades
+premarket — RTH-only monitoring left a blind spot. Designed to be invoked
+every few minutes by launchd.
 
 Cooldown: a state file under data/ records the last alert time and
-prevents re-paging within ALERT_COOLDOWN_MIN.
+prevents re-paging within ALERT_COOLDOWN_MIN. Stdlib-only on purpose so it
+runs under any interpreter launchd points at.
 """
 from __future__ import annotations
 
@@ -26,13 +37,18 @@ REPO_DIR = Path(__file__).resolve().parent.parent
 LOG_PATH = REPO_DIR / "logs" / "watchdog.log"
 STATE_PATH = REPO_DIR / "data" / "watchdog_state.json"
 DB_PATH = REPO_DIR / "data" / "trading_agent.db"
+LIVENESS_PATH = REPO_DIR / "data" / "channel_liveness.json"
 POLICY_PATH = REPO_DIR / "config" / "policy.yaml"
 ENV_PATH = REPO_DIR / ".env"
 
 AGENT_LABEL = "com.jasonli.trading-agent"
-QUIET_THRESHOLD_MIN = 30   # alert if no audit row in this many minutes
+QUIET_THRESHOLD_MIN = 30   # legacy fallback: alert if no audit row in this many minutes
 ALERT_COOLDOWN_MIN = 30    # don't re-alert more than once per cooldown
-RTH_OPEN = time(9, 30)
+CHANNEL_STALE_MIN = 15     # alert if a tracked channel's beacon is older than this
+# Active window spans premarket -> close. Open is read from policy
+# (stock_premarket_start, fallback 04:00); close stays 16:00 because
+# after-hours orders are queued, not live-executed (out of scope here).
+DEFAULT_PREMARKET_OPEN = time(4, 0)
 RTH_CLOSE = time(16, 0)
 
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -50,10 +66,87 @@ def now_et() -> datetime:
     return datetime.now(ZoneInfo("America/New_York"))
 
 
-def is_rth(dt: datetime) -> bool:
+def in_active_window(dt: datetime, open_t: time, close_t: time) -> bool:
+    """True on a weekday with dt's clock time in [open_t, close_t] (ET)."""
     if dt.weekday() >= 5:  # Sat/Sun
         return False
-    return RTH_OPEN <= dt.time() <= RTH_CLOSE
+    return open_t <= dt.time() <= close_t
+
+
+def _policy_premarket_open(path: Path = POLICY_PATH) -> time:
+    """Premarket-open time from policy.yaml (stdlib line-parse), fallback 04:00.
+
+    Read from policy so the watchdog window stays in sync with what the system
+    actually trades, without importing pyyaml (keeps this script stdlib-only).
+    """
+    if not path.exists():
+        return DEFAULT_PREMARKET_OPEN
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return DEFAULT_PREMARKET_OPEN
+    for line in lines:
+        s = line.strip()
+        if s.startswith("stock_premarket_start:"):
+            val = s.split(":", 1)[1].strip().strip('"').strip("'")
+            try:
+                hh, mm = val.split(":")
+                return time(int(hh), int(mm))
+            except (ValueError, TypeError):
+                return DEFAULT_PREMARKET_OPEN
+    return DEFAULT_PREMARKET_OPEN
+
+
+def _parse_iso_utc(ts: object) -> "datetime | None":
+    """Parse an ISO-8601 stamp (accepting a trailing 'Z') to tz-aware UTC."""
+    if not isinstance(ts, str):
+        return None
+    s = ts.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def parse_liveness(text: str) -> "dict | None":
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def read_liveness() -> "dict | None":
+    """Load the forwarder's per-channel liveness file, or None if unavailable."""
+    if not LIVENESS_PATH.exists():
+        return None
+    try:
+        return parse_liveness(LIVENESS_PATH.read_text())
+    except OSError:
+        return None
+
+
+def stale_channels(liveness: dict, now: datetime, threshold_min: int) -> list[str]:
+    """Tracked channels whose last-seen beacon is older than the threshold.
+
+    A tracked channel with a missing or unparseable timestamp is treated as
+    stale (its capture never checked in). `now` may be tz-aware in any zone;
+    stored stamps are ISO-8601 UTC, so the comparison is instant-correct.
+    """
+    tracked = liveness.get("tracked") or []
+    channels = liveness.get("channels") or {}
+    cutoff = now - timedelta(minutes=threshold_min)
+    stale: list[str] = []
+    for name in tracked:
+        dt = _parse_iso_utc(channels.get(name))
+        if dt is None or dt < cutoff:
+            stale.append(name)
+    return stale
 
 
 def agent_pid() -> int | None:
@@ -149,28 +242,42 @@ def in_cooldown(state: dict, now: datetime) -> bool:
 
 def main() -> int:
     now_et_dt = now_et()
-    if not is_rth(now_et_dt):
-        logger.info("outside RTH (%s); skipping", now_et_dt.isoformat())
+    open_t = _policy_premarket_open()
+    if not in_active_window(now_et_dt, open_t, RTH_CLOSE):
+        logger.info("outside active window %s-%s (%s); skipping",
+                    open_t.strftime("%H:%M"), RTH_CLOSE.strftime("%H:%M"),
+                    now_et_dt.isoformat())
         return 0
 
     pid = agent_pid()
-    has_recent = last_audit_within(QUIET_THRESHOLD_MIN)
-    logger.info("RTH check: pid=%s recent_audit=%s", pid, has_recent)
-
-    if pid and has_recent:
-        return 0
+    liveness = read_liveness()
+    stale = (stale_channels(liveness, now_et_dt, CHANNEL_STALE_MIN)
+             if liveness is not None else None)
+    logger.info("active-window check: pid=%s liveness=%s stale=%s",
+                pid, "yes" if liveness is not None else "missing", stale)
 
     if not pid:
         msg = (
-            f"🚨 Trading agent NOT RUNNING during RTH ({now_et_dt:%H:%M ET}). "
-            f"launchctl reports no PID for {AGENT_LABEL}."
+            f"🚨 Trading agent NOT RUNNING during trading window "
+            f"({now_et_dt:%H:%M ET}). launchctl reports no PID for {AGENT_LABEL}."
+        )
+    elif stale:  # non-empty -> a tracked channel's capture has gone silent
+        msg = (
+            f"🚨 Discord capture STALE ({now_et_dt:%H:%M ET}): channel(s) "
+            f"{', '.join(stale)} have not beaconed in >{CHANNEL_STALE_MIN} min. "
+            f"The tab may be open but capture is dead (orphaned observer / "
+            f"forwarder down)."
+        )
+    elif stale is None and not last_audit_within(QUIET_THRESHOLD_MIN):
+        # Beacon liveness unavailable (forwarder pre-upgrade / file missing) —
+        # fall back to the legacy coarse audit-row heuristic so we don't go dark.
+        msg = (
+            f"🚨 Trading agent quiet during trading window ({now_et_dt:%H:%M ET}): "
+            f"no execution_audit_log rows in last {QUIET_THRESHOLD_MIN} min and no "
+            f"channel-liveness file. Agent pid={pid} but may be wedged."
         )
     else:
-        msg = (
-            f"🚨 Trading agent quiet during RTH ({now_et_dt:%H:%M ET}): "
-            f"no execution_audit_log rows in last {QUIET_THRESHOLD_MIN} min. "
-            f"Agent pid={pid} but may be wedged."
-        )
+        return 0  # healthy
 
     state = load_state()
     if in_cooldown(state, now_et_dt):
