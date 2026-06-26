@@ -35,8 +35,15 @@ class FakeGateway:
         # §3a hook: a one-shot async callback run INSIDE wait_fill, i.e. while a
         # sell order is placed-but-unrecorded. Used to inject a concurrent trim.
         self.on_wait_fill: Optional[Callable[[], Awaitable[None]]] = None
+        # §3a hook (prepare window): a one-shot async callback run INSIDE
+        # qualify_equity, i.e. while a sell is being prepared (before place).
+        # Lets a test inject a concurrent trim during the sell's prepare step.
+        self.on_qualify: Optional[Callable[[], Awaitable[None]]] = None
 
     async def qualify_equity(self, ticker: str) -> BrokerContractRef:
+        if self.on_qualify is not None:
+            cb, self.on_qualify = self.on_qualify, None  # one-shot
+            await cb()
         return BrokerContractRef(symbol=ticker, sec_type="STK", exchange="SMART",
                                  currency="USD", qualified=True)
 

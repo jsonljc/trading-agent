@@ -368,3 +368,54 @@ def test_telegram_flag_sends_summary(seeded_db, capsys, monkeypatch):
     assert "stp" in sent[0]
     # terminal table still printed
     assert "stp" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# In-flight (pending) exit reserves must not reach the realized report.
+# ---------------------------------------------------------------------------
+
+async def _seed_pending_and_finalized(db_path):
+    """Two filled lots. 'done' has a finalized exit (sold_qty=10); 'pend' has
+    only an in-flight reserve (sold_qty NULL). _fetch must keep 'done' and drop
+    'pend' so a pending reserve never reaches compute_attribution or the
+    since-sell window logic as phantom proceeds."""
+    conn = await get_connection(db_path)
+    intents = TradeIntentStore(conn)
+    exits = PositionExitStore(conn)
+    base = {
+        "event_id": "e", "channel": "stp", "side": "long",
+        "instrument_type": "equity", "conviction": "high",
+        "execution_state": "filled", "outbox_status": "confirmed",
+        "policy_state": "approved",
+        "signal_received_at": "2026-05-01T00:00:00+00:00",
+        "intent_created_at": "2026-05-01T00:00:00+00:00",
+        "filled_at": "2026-05-01T14:00:00+00:00",
+        "created_at": "2026-05-01T00:00:00+00:00",
+        "updated_at": "2026-05-01T00:00:00+00:00",
+    }
+    await intents.insert({**base, "intent_id": "done", "ticker": "NVDA",
+                          "fill_price": 100.0, "fill_qty": 10})
+    await intents.insert({**base, "intent_id": "pend", "ticker": "TSLA",
+                          "fill_price": 50.0, "fill_qty": 10})
+    await exits.record_exit(fingerprint="f1", event_id="e", intent_id="done",
+                            channel="stp", ticker="NVDA", scope="full",
+                            requested_qty=10, sold_qty=10, sold_avg_price=110.0,
+                            broker_order_ref="r1", reason="follow_sell")
+    await exits.reserve_exit(fingerprint="f2", event_id="e", intent_id="pend",
+                             channel="stp", ticker="TSLA", scope="full",
+                             requested_qty=10, reason="follow_sell_pending")
+    await conn.close()
+
+
+@pytest.fixture
+def pending_finalized_db(tmp_path):
+    db_path = str(tmp_path / "pendfin.db")
+    asyncio.run(_seed_pending_and_finalized(db_path))
+    return db_path
+
+
+def test_fetch_excludes_pending_reserves_keeps_finalized(pending_finalized_db):
+    entries, trims, exits = cli._fetch(pending_finalized_db)
+    exit_ids = {e["intent_id"] for e in exits}
+    assert "done" in exit_ids      # finalized exit retained
+    assert "pend" not in exit_ids  # in-flight reserve dropped
