@@ -19,7 +19,7 @@ from infra.storage.trade_intent_store import TradeIntentStore
 from infra.storage.trim_ladder_store import TrimLadderStore
 from agent.context import Context
 from agent.exit_ladder import fire_rung_if_crossed
-from skills.execution.sell_follower import SellFollower
+from skills.execution.sell_follower import SellFollower, follow_sell_position
 from tests.support.factories import make_filled_intent
 from tests.support.fake_gateway import FakeGateway
 
@@ -169,6 +169,54 @@ class PositionInvariantMachine(RuleBasedStateMachine):
             row = await cur.fetchone()
         return int(row[0] or 0)
 
+    @rule(intent=intents, rung=st.sampled_from([1, 2, 3]),
+          fp_key=st.integers(min_value=0, max_value=3))
+    def inflight_sell_with_concurrent_trim(self, intent, rung, fp_key):
+        """N3: while a trader-sell is placed-but-unrecorded (inside wait_fill),
+        fire a REAL trim rung against the REAL remaining_qty. The in-flight sell
+        reserve must make remaining_qty exclude the shares this sell is taking,
+        so the concurrent trim short-circuits and cannot oversize. The
+        never_oversell / remaining_qty_identity invariants then verify it.
+        (Randomized generalization of the §3a probe.)"""
+        meta = self._rungs[intent].get(rung)
+        if meta is None or meta["recorded"]:
+            return  # rung not armed, already fired, or stuck-claimed
+        rem = self._run(self.exits.remaining_qty(intent))
+        if rem <= 0:
+            return  # nothing to sell -> no in-flight window to exercise
+        channel = self._rungs[intent]["_meta"]["channel"]
+        ticker = self._rungs[intent]["_meta"]["ticker"]
+        fill_qty = self._fill[intent]
+        self._seq += 1
+        fingerprint = f"inflight-{channel}-{ticker}-{fp_key}-{self._seq}"
+
+        async def concurrent_trim():
+            # current_price deterministically crosses this rung's threshold.
+            price = 100.0 * (1.0 + meta["threshold_pct"]) + 1.0
+            fired = await fire_rung_if_crossed(
+                gw=self.gw, trim_store=self.trims, exits_store=self.exits,
+                intent_id=intent, ticker=ticker, avg_fill_price=100.0,
+                original_qty=fill_qty, rung=rung,
+                threshold_pct=meta["threshold_pct"], trim_pct=meta["trim_pct"],
+                current_price=price, slippage_cap_pct=0.01)
+            if fired:
+                meta["recorded"] = True
+                key = (intent, rung)
+                self._positive_fires[key] = self._positive_fires.get(key, 0) + 1
+
+        self.gw.fill_mode = "full"
+        self.gw.unavailable = False
+        self.gw.on_wait_fill = concurrent_trim
+        try:
+            self._run(follow_sell_position(
+                gw=self.gw, exits_store=self.exits, fingerprint=fingerprint,
+                event_id=f"evt-{fingerprint}", intent_id=intent, channel=channel,
+                ticker=ticker, qty=rem, scope="full", slippage_cap_pct=0.01,
+                fill_timeout=5.0))
+        finally:
+            self.gw.on_wait_fill = None
+            self.gw.unavailable = False
+
     @invariant()
     def claim_once_idempotency(self):
         # INV-2: at most one SellFollower invocation records a positive-qty exit
@@ -213,17 +261,35 @@ class PositionInvariantMachine(RuleBasedStateMachine):
                 reserves += _round_half_up_min1(fill_qty * r["trim_pct"])
         return recorded, reserves
 
+    async def _exit_contribution(self, intent_id: str) -> tuple[int, int]:
+        """Mirror remaining_qty's exit term from first principles: a finalized
+        exit (sold_qty set) contributes sold_qty; an in-flight reserve (sold_qty
+        NULL) contributes requested_qty."""
+        recorded = reserved = 0
+        async with self._conn.execute(
+            "SELECT sold_qty, requested_qty FROM position_exits WHERE intent_id=?",
+            (intent_id,),
+        ) as cur:
+            for sold_qty, requested_qty in await cur.fetchall():
+                if sold_qty is not None:
+                    recorded += int(sold_qty)
+                else:
+                    reserved += int(requested_qty or 0)
+        return recorded, reserved
+
     # ----------------------------------------------------------------- oracle
     @invariant()
     def remaining_qty_identity(self):
         for intent_id, fill_qty in self._fill.items():
             rem = self._run(self.exits.remaining_qty(intent_id))
-            rec_trims, reserves = self._run(self._recorded_trims(intent_id))
-            rec_exits = self._run(self.exits.sold_qty_for_intent(intent_id))
-            expected = max(0, fill_qty - rec_trims - reserves - rec_exits)
+            rec_trims, trim_reserves = self._run(self._recorded_trims(intent_id))
+            rec_exits, exit_reserves = self._run(self._exit_contribution(intent_id))
+            expected = max(0, fill_qty - rec_trims - trim_reserves
+                           - rec_exits - exit_reserves)
             assert rem == expected, (
                 f"{intent_id}: remaining_qty={rem} != {expected} "
-                f"(fill={fill_qty} trims={rec_trims} reserves={reserves} exits={rec_exits})")
+                f"(fill={fill_qty} trims={rec_trims} trim_reserves={trim_reserves} "
+                f"exits={rec_exits} exit_reserves={exit_reserves})")
             assert rem >= 0, f"{intent_id}: negative remaining {rem}"
 
     @invariant()
