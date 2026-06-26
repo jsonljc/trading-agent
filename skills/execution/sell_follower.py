@@ -27,14 +27,40 @@ async def follow_sell_position(
     """Submit a marketable-limit SELL for `qty` shares of one position and record
     the exit. Returns the actual quantity sold (0 on a non-fill). Mirrors the
     trim ladder's partial-fill discipline: cancel any residual, record the real
-    fill. Raises IBGatewayUnavailable to the caller (which owns the claim)."""
+    fill. Raises IBGatewayUnavailable to the caller (which owns the claim).
+
+    Reserves the full `qty` in the exit ledger BEFORE placing the order, so a
+    concurrent trim (or a second-fingerprint sell) reads remaining_qty net of
+    this in-flight sell and cannot oversize (spec §3a). The reserve is corrected
+    to the actual fill once known, symmetric to the trim ladder's in-flight
+    reserve."""
     contract = await gw.qualify_equity(ticker)
     price = await gw.get_quote(ticker)
     limit = marketable_sell_limit(price, slippage_cap_pct)
     order = PreparedOrder(action="SELL", quantity=qty, order_type="LMT",
                           limit_price=limit, tif="DAY")
     client_order_id = f"{intent_id}:exit:{fingerprint[:16]}"
-    trade = await gw.place_order(contract, order, client_order_id)
+
+    # Reserve BEFORE placing: remaining_qty now excludes these shares for any
+    # concurrent reader (trim ladder / second sell) for the whole place->fill
+    # window.
+    exit_id = await exits_store.reserve_exit(
+        fingerprint=fingerprint, event_id=event_id, intent_id=intent_id,
+        channel=channel, ticker=ticker, scope=scope, requested_qty=qty,
+        reason="follow_sell_pending")
+    try:
+        trade = await gw.place_order(contract, order, client_order_id)
+    except IBGatewayUnavailable:
+        # Nothing was placed -> release the reserve so the caller's retry can
+        # re-size against the still-held shares; re-raise (the caller owns the
+        # claim / retry decision).
+        await exits_store.finalize_exit(
+            exit_id, sold_qty=0, sold_avg_price=None, broker_order_ref=None,
+            reason="follow_sell_place_failed")
+        raise
+    # If wait_fill raises, the order may be live at IB: leave the reserve in
+    # place (stuck-until-reconciled), which is the safe direction -- it can
+    # never oversell.
     fill = await gw.wait_fill(trade, timeout=fill_timeout)
 
     sold = int(fill.filled_qty) if fill.filled_qty and fill.filled_qty > 0 else 0
@@ -45,10 +71,10 @@ async def follow_sell_position(
         except Exception:
             logger.exception("sell residual cancel failed (order may rest at IB)")
 
-    await exits_store.record_exit(
-        fingerprint=fingerprint, event_id=event_id, intent_id=intent_id,
-        channel=channel, ticker=ticker, scope=scope, requested_qty=qty,
-        sold_qty=sold, sold_avg_price=fill.avg_fill_price,
+    # Finalize the reserve to the actual fill: releases any over-reserve
+    # (requested-sold); sold=0 releases the whole reserve.
+    await exits_store.finalize_exit(
+        exit_id, sold_qty=sold, sold_avg_price=fill.avg_fill_price,
         broker_order_ref=fill.broker_order_id, reason="follow_sell")
     if sold < qty:
         logger.warning("follow_sell %s: sold %d/%d (%s)", intent_id, sold, qty,

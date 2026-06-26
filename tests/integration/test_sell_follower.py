@@ -6,7 +6,7 @@ from infra.storage.trade_intent_store import TradeIntentStore
 from infra.storage.position_exit_store import PositionExitStore
 from infra.ib.models import FillResult, FillStatus, BrokerContractRef
 from infra.ib.gateway import IBGatewayUnavailable
-from skills.execution.sell_follower import SellFollower
+from skills.execution.sell_follower import SellFollower, follow_sell_position
 
 
 def _now():
@@ -254,3 +254,35 @@ async def test_broker_unavailable_with_no_sale_releases_claim(db):
     assert "broker_unavailable" in result.reason
     # Released so a repost can retry (nothing was sold).
     assert await PositionExitStore(db).claim_sell_event("fp-retry", "x") is True
+
+
+@pytest.mark.asyncio
+async def test_reserve_is_written_before_place_order(db):
+    # The in-flight sell reserve must exist BEFORE place_order returns, so a
+    # concurrent reader (the trim ladder, mid-wait_fill) sees remaining_qty net
+    # of this sell and cannot oversize. This is the §3a fix.
+    intents = TradeIntentStore(db)
+    exits = PositionExitStore(db)
+    await intents.insert(_filled_intent("e1:AAPL:long", fill_qty=100))
+    gw = _gw()
+    observed = {}
+
+    async def place(contract, order, coid):
+        observed["remaining_at_place"] = await exits.remaining_qty("e1:AAPL:long")
+        return MagicMock()
+    gw.place_order = AsyncMock(side_effect=place)
+    gw.wait_fill = AsyncMock(return_value=FillResult(
+        status=FillStatus.FILLED, broker_order_id="o1", perm_id=1,
+        submitted_qty=100, filled_qty=100, remaining_qty=0, avg_fill_price=99.5,
+        last_status="Filled", status_timestamp=_now()))
+
+    sold = await follow_sell_position(
+        gw=gw, exits_store=exits, fingerprint="fp", event_id="e",
+        intent_id="e1:AAPL:long", channel="mystic", ticker="AAPL", qty=100,
+        scope="full", slippage_cap_pct=0.01, fill_timeout=5.0)
+
+    assert sold == 100
+    # Reserve already counted while the order was being placed (100 - 100 = 0).
+    assert observed["remaining_at_place"] == 0
+    # End state: the reserve is finalized to the actual fill.
+    assert await exits.remaining_qty("e1:AAPL:long") == 0

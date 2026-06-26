@@ -1,6 +1,7 @@
-"""§3a probe: does a trim firing inside a trader-sell's in-flight (placed but
-unrecorded) window oversell? remaining_qty reserves in-flight TRIMS but not
-in-flight SELLS, so this may record > fill_qty. See spec §3a + §10 findings policy.
+"""§3a regression: a trim firing inside a trader-sell's in-flight (placed but
+unrecorded) window must NOT oversell. follow_sell_position reserves the full
+sell qty before place_order, so remaining_qty=0 during the window and the
+concurrent trim short-circuits. Guards the fix in spec 2026-06-26 §3a.
 """
 import aiosqlite
 import pytest
@@ -15,9 +16,6 @@ from tests.support.factories import make_filled_intent
 from tests.support.fake_gateway import FakeGateway
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: in-flight trader-sell is "
-    "unreserved in remaining_qty; a concurrent trim oversells (recorded 150 of "
-    "100). See spec 2026-06-26 §3a. Fix (reserve in-flight sells) pending sign-off.")
 @pytest.mark.asyncio
 async def test_inflight_sell_concurrent_trim_does_not_oversell():
     async with aiosqlite.connect(":memory:") as conn:
