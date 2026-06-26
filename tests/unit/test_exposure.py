@@ -81,3 +81,21 @@ async def test_fully_sold_contributes_zero(store):
         "VALUES ('fp', 'a', 100, 't')")
     await conn.commit()
     assert await open_deployed_notional(store) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_pending_reserve_does_not_reduce_exposure(store):
+    # An in-flight sell reserve (sold_qty NULL) is not yet sold: the shares are
+    # still held, so open notional must still count them. This is intentionally
+    # asymmetric with remaining_qty (which reserves the in-flight sell to block an
+    # oversell) -- exposure measures capital still at risk, not sell-ability.
+    await _write_entry(store, intent_id="a", ticker="AAA", instrument_type="equity",
+                       side="long", fill_price=10.0, fill_qty=100)
+    conn = store._conn
+    await conn.execute(
+        "INSERT INTO position_exits "
+        "(fingerprint, intent_id, requested_qty, sold_qty, created_at) "
+        "VALUES ('fp', 'a', 40, NULL, 't')")
+    await conn.commit()
+    # 100 still held -> $1,000 (SUM(sold_qty) ignores the NULL pending row).
+    assert await open_deployed_notional(store) == pytest.approx(1_000.0)
