@@ -88,6 +88,16 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
             CooldownGuard(policy, trade_intent_store),
         ]
 
+    # Pre-trade spending / exposure ceilings (per-share price cap + aggregate
+    # deployed-notional cap). Requires the intent store to read open exposure;
+    # runs right after ReferencePriceCapture so the equity spot is available and
+    # before any order is built. OrderSizer enforces the per-order buying-power
+    # clamp + the aggregate cap using the keys this guard stashes.
+    risk_guards = []
+    if trade_intent_store is not None:
+        from skills.risk.exposure_guard import ExposureGuard
+        risk_guards = [ExposureGuard(policy, gateway, trade_intent_store)]
+
     rungs = [(i + 1, r.threshold_pct, r.trim_pct)
              for i, r in enumerate(policy.execution.trim_ladder.rungs)]
 
@@ -97,6 +107,7 @@ def build_phase2b_execution_chain(policy, execution_store, gateway,
         ExecutionEligibilityGuard(policy),
         RthEntryGuard(),
         ReferencePriceCapture(gateway),
+    ] + risk_guards + [
         SizingResolver(policy.execution),
 
         # Shares sub-chain

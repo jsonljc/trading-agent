@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from agent.context import Context, SkillResult
 from agent.skill import Skill
@@ -11,19 +12,44 @@ class TelegramDigest(Skill):
     def __init__(self, client, mode: str = "signal_only") -> None:
         self._client = client
         self._mode = mode
+        self._pending: set[asyncio.Task] = set()
 
     async def run(self, ctx: Context) -> SkillResult:
+        # The "signal parsed" digest must NOT block order execution. The send is
+        # an httpx round-trip (up to a 10s timeout) that previously sat on the
+        # critical path BEFORE the order was placed. Fire it concurrently and
+        # return immediately so phase2b execution proceeds without waiting; the
+        # in-flight send is flushed on shutdown via drain().
         try:
             text = self._format_signal_digest(ctx)
-            await self._client.send_message(text)
-            return SkillResult(status="success")
         except Exception as exc:
-            logger.error("telegram_digest failed: %s", exc)
+            logger.error("telegram_digest format failed: %s", exc)
             return SkillResult(
                 status="success",
                 updates={"digest_failure": str(exc)},
-                reason=f"telegram delivery failed: {exc}",
+                reason=f"telegram digest format failed: {exc}",
             )
+        self._spawn(self._client.send_message(text))
+        return SkillResult(status="success")
+
+    def _spawn(self, coro) -> None:
+        """Run a Telegram send concurrently, holding a reference so it is not
+        garbage-collected mid-flight and its failures are logged, not lost."""
+        task = asyncio.create_task(self._guarded_send(coro))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def _guarded_send(self, coro) -> None:
+        try:
+            await coro
+        except Exception as exc:
+            logger.error("telegram_digest send failed: %s", exc)
+
+    async def drain(self) -> None:
+        """Await any in-flight background sends — call on graceful shutdown so a
+        just-fired signal digest isn't dropped."""
+        if self._pending:
+            await asyncio.gather(*list(self._pending), return_exceptions=True)
 
     def _format_signal_digest(self, ctx: Context) -> str:
         import html
@@ -63,6 +89,62 @@ class TelegramDigest(Skill):
         if bucket not in ("HIGH", "LOW"):
             return False
         return any(m in reason for m in cls._BROKER_UNAVAILABLE_MARKERS)
+
+    # size_source values the TraderClassifier stamps on ctx when it DEGRADED or
+    # DROPPED a probable entry — as opposed to a genuine commentary SKIP
+    # (size_source="skip"), which is the common, correct case and MUST stay
+    # silent. The skip reason that actually reaches on_skip for all of these is
+    # EntrySkipGate's generic "no_entry:bucket=SKIP", so the discriminator is the
+    # size_source, NOT the reason string.
+    _MISSED_ENTRY_SIZE_SOURCES = (
+        "llm_error",          # classifier raised → forced SKIP (we lost the read)
+        "drop_low_conf",      # actionable-looking entry below the confidence floor
+        "ticker_not_in_msg",  # anti-hallucination drop of an LLM-invented ticker
+    )
+
+    # Skip-reason prefixes (emitted upstream of / instead of the classifier) that
+    # also indicate a probable real entry was dropped.
+    _MISSED_ENTRY_REASON_PREFIXES = (
+        "no_trader_profile:",  # TraderRouter: unknown author on a tracked channel
+        "entry_outside_rth",   # RthEntryGuard: actionable entry fired off-session
+        # Capital/risk caps that drop a WHOLE actionable entry (the shares leg
+        # took nothing) — without these the operator is never told an entry they
+        # wanted was dropped for buying-power / exposure / price-cap reasons.
+        # Emitted by OrderSizer and ExposureGuard.
+        "insufficient_buying_power",
+        "exposure_cap_exceeded",
+        "above_max_equity_price",
+        "exposure_data_unavailable",
+    )
+
+    @classmethod
+    def is_missed_entry_skip(cls, ctx: Context, reason: str) -> bool:
+        """True when a skip likely dropped a REAL entry (degraded/missed) and so
+        should be surfaced to the operator via send_missed_signal_alert.
+
+        Mirrors is_broker_unavailable_skip; consumed by main.on_skip. Returns
+        False for a genuine commentary SKIP (size_source="skip") and for benign
+        filters (bot_author, missing_alert_mention, dedup, idempotency) so we do
+        not spam the operator on the common, correct cases.
+        """
+        if ctx.get("size_source") in cls._MISSED_ENTRY_SIZE_SOURCES:
+            return True
+        return bool(reason) and reason.startswith(cls._MISSED_ENTRY_REASON_PREFIXES)
+
+    @classmethod
+    def missed_entry_reason(cls, ctx: Context, reason: str) -> str:
+        """Operator-facing reason for a missed-entry alert.
+
+        For classifier drops the raw skip reason is the uninformative
+        "no_entry:bucket=SKIP"; surface the classifier's own size_source +
+        reason instead so the alert says WHY. Upstream skips (no_trader_profile,
+        entry_outside_rth) already carry a descriptive reason, so pass through.
+        """
+        size_source = ctx.get("size_source")
+        if size_source in cls._MISSED_ENTRY_SIZE_SOURCES:
+            detail = ctx.get("classifier_reason")
+            return f"{size_source} — {detail}" if detail else size_source
+        return reason
 
     @staticmethod
     def is_order_rejected(reason: str) -> bool:

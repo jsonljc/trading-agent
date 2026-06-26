@@ -68,6 +68,7 @@ def test_chain_has_expected_skill_order():
         "ExecutionEligibilityGuard",
         "RthEntryGuard",
         "ReferencePriceCapture",
+        "ExposureGuard",
         "SizingResolver",
         "EquityContractBuilder",
         "OrderSizer",

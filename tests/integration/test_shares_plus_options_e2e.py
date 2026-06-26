@@ -266,9 +266,10 @@ async def test_options_chase_guard_skips_when_price_chased():
     )
 
     gw = MagicMock()
-    # reference(100) -> OrderSizer equity(100) -> SharesMarketSubmitter live ask(100)
-    #   -> OptionsChaseGuard(115): 15% > 10% threshold -> skip options.
-    gw.get_quote = AsyncMock(side_effect=[100.0, 100.0, 100.0, 115.0])
+    # reference(100) -> OrderSizer reuses reference_price (no quote) ->
+    #   SharesMarketSubmitter live ask(100) -> OptionsChaseGuard(115):
+    #   15% > 10% threshold -> skip options.
+    gw.get_quote = AsyncMock(side_effect=[100.0, 100.0, 115.0])
     gw.get_option_ask = AsyncMock(return_value=(5.0, 0.0))
     gw.cancel_order = AsyncMock(return_value=True)
     gw.qualify_equity = AsyncMock(return_value=equity_ref)

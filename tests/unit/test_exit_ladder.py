@@ -12,8 +12,10 @@ async def test_does_not_fire_below_threshold():
     intents = MagicMock()
     trims = MagicMock()
     trims.record_fire = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10**9)
     fired = await fire_rung_if_crossed(
-        gw=gw, trim_store=trims,
+        gw=gw, trim_store=trims, exits_store=exits,
         intent_id="i1", ticker="AAPL",
         avg_fill_price=100.0, original_qty=100,
         rung=1, threshold_pct=0.05, trim_pct=0.40,
@@ -39,8 +41,10 @@ async def test_fires_at_threshold_and_records():
     trims.record_fire = AsyncMock()
     trims.claim_for_fire = AsyncMock(return_value=True)
     trims.release_claim = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10**9)
     fired = await fire_rung_if_crossed(
-        gw=gw, trim_store=trims,
+        gw=gw, trim_store=trims, exits_store=exits,
         intent_id="i1", ticker="AAPL",
         avg_fill_price=100.0, original_qty=100,
         rung=1, threshold_pct=0.05, trim_pct=0.40,
@@ -74,8 +78,10 @@ async def test_rounds_trim_qty_minimum_one():
     trims.record_fire = AsyncMock()
     trims.claim_for_fire = AsyncMock(return_value=True)
     trims.release_claim = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10**9)
     fired = await fire_rung_if_crossed(
-        gw=gw, trim_store=trims,
+        gw=gw, trim_store=trims, exits_store=exits,
         intent_id="i1", ticker="AAPL",
         avg_fill_price=100.0, original_qty=2, rung=1,
         threshold_pct=0.05, trim_pct=0.40, current_price=105.0,
@@ -95,8 +101,10 @@ async def test_skips_when_claim_fails():
     trims = MagicMock()
     trims.claim_for_fire = AsyncMock(return_value=False)
     trims.record_fire = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10**9)
     fired = await fire_rung_if_crossed(
-        gw=gw, trim_store=trims,
+        gw=gw, trim_store=trims, exits_store=exits,
         intent_id="i1", ticker="AAPL",
         avg_fill_price=100.0, original_qty=100,
         rung=1, threshold_pct=0.05, trim_pct=0.40,
@@ -126,8 +134,10 @@ async def test_partial_trim_records_real_qty_and_cancels_residual():
     trims.record_fire = AsyncMock()
     trims.claim_for_fire = AsyncMock(return_value=True)
     trims.release_claim = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10**9)
     fired = await fire_rung_if_crossed(
-        gw=gw, trim_store=trims, intent_id="i1", ticker="AAPL",
+        gw=gw, trim_store=trims, exits_store=exits, intent_id="i1", ticker="AAPL",
         avg_fill_price=100.0, original_qty=100, rung=1,
         threshold_pct=0.05, trim_pct=0.40, current_price=105.0,
     )
@@ -155,8 +165,10 @@ async def test_zero_fill_trim_releases_rung_for_retry():
     trims.record_fire = AsyncMock()
     trims.claim_for_fire = AsyncMock(return_value=True)
     trims.release_claim = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10**9)
     fired = await fire_rung_if_crossed(
-        gw=gw, trim_store=trims, intent_id="i1", ticker="AAPL",
+        gw=gw, trim_store=trims, exits_store=exits, intent_id="i1", ticker="AAPL",
         avg_fill_price=100.0, original_qty=100, rung=1,
         threshold_pct=0.05, trim_pct=0.40, current_price=105.0,
     )
@@ -178,3 +190,62 @@ def test_in_rth():
     assert not _in_rth(datetime(2026, 5, 5, 9, 29, tzinfo=et))  # one minute before open
     assert not _in_rth(datetime(2026, 5, 5, 16, 0, tzinfo=et))  # market close
     assert not _in_rth(datetime(2026, 5, 5, 20, 0, tzinfo=et))  # after hours
+
+
+@pytest.mark.asyncio
+async def test_does_not_oversell_after_position_exited():
+    """After the trader is followed out (remaining held = 0), a trim rung must
+    NOT place a SELL — otherwise the ladder shorts a position we no longer own.
+    The held-shares check happens BEFORE claiming the rung so it is left intact
+    for a later tick rather than silently consumed."""
+    gw = MagicMock()
+    gw.qualify_equity = AsyncMock()
+    gw.place_order = AsyncMock()
+    trims = MagicMock()
+    trims.claim_for_fire = AsyncMock(return_value=True)
+    trims.record_fire = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=0)  # followed out / fully trimmed
+    fired = await fire_rung_if_crossed(
+        gw=gw, trim_store=trims, exits_store=exits,
+        intent_id="i1", ticker="AAPL",
+        avg_fill_price=100.0, original_qty=100,
+        rung=1, threshold_pct=0.05, trim_pct=0.40,
+        current_price=105.0,
+    )
+    assert fired is False
+    gw.place_order.assert_not_awaited()
+    trims.claim_for_fire.assert_not_awaited()  # guarded before the claim
+    trims.record_fire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_caps_trim_qty_at_remaining_held():
+    """A trim sized at 0.40 * 100 = 40 must be capped at the shares still held
+    (10) when the position has been partly exited — never sell into a short."""
+    contract = BrokerContractRef(symbol="AAPL", sec_type="STK",
+                                 exchange="SMART", currency="USD", qualified=True)
+    gw = MagicMock()
+    gw.qualify_equity = AsyncMock(return_value=contract)
+    gw.place_order = AsyncMock(return_value=MagicMock())
+    gw.wait_fill = AsyncMock(return_value=FillResult(
+        status=FillStatus.FILLED, broker_order_id="sell-cap", perm_id=11,
+        submitted_qty=10, filled_qty=10, remaining_qty=0, avg_fill_price=105.0,
+        last_status="Filled", status_timestamp="2026-05-05T14:00:00Z",
+    ))
+    trims = MagicMock()
+    trims.claim_for_fire = AsyncMock(return_value=True)
+    trims.record_fire = AsyncMock()
+    trims.release_claim = AsyncMock()
+    exits = MagicMock()
+    exits.remaining_qty = AsyncMock(return_value=10)  # only 10 shares left
+    fired = await fire_rung_if_crossed(
+        gw=gw, trim_store=trims, exits_store=exits,
+        intent_id="i1", ticker="AAPL",
+        avg_fill_price=100.0, original_qty=100,
+        rung=1, threshold_pct=0.05, trim_pct=0.40,
+        current_price=105.0,
+    )
+    assert fired is True
+    placed = gw.place_order.call_args[0][1]
+    assert placed.quantity == 10  # capped at remaining held, not the nominal 40

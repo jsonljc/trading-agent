@@ -12,9 +12,22 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional
+from pathlib import Path
+from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
+
+# infra/bridge_client/discord_extension_forwarder.py -> repo root
+REPO_DIR = Path(__file__).resolve().parents[2]
+# Per-channel liveness hand-off file. Written here, read by bin/agent-watchdog
+# (a separate launchd process) so it can alert when a tracked channel's capture
+# goes silent. Kept self-describing so the watchdog needs no policy access.
+DEFAULT_LIVENESS_PATH = REPO_DIR / "data" / "channel_liveness.json"
+
+
+def _utc_now_iso() -> str:
+    """ISO-8601 UTC with a trailing 'Z' (matches the bridge envelope format)."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def map_channel(channel_id: Optional[str], channel_map: dict[str, str]) -> Optional[str]:
@@ -28,7 +41,7 @@ def build_envelope(channel: str, author: str, content: str, message_id: str,
                    received_at: Optional[str] = None) -> dict:
     """Build the bridge-socket envelope the agent's SocketReader expects."""
     if received_at is None:
-        received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        received_at = _utc_now_iso()
     return {
         "event_id": f"discord_ext:{message_id}",
         "source": "discord_ext",
@@ -37,6 +50,112 @@ def build_envelope(channel: str, author: str, content: str, message_id: str,
         "trigger_preview": content,
         "received_at": received_at,
     }
+
+
+def beacon_channel_ids(payload: object) -> list[str]:
+    """Extract the watched Discord channel IDs from a /beacon POST body.
+
+    Each Discord tab's content script periodically reports the channel it is
+    actively watching. Accepts a "channels"/"watching" list or a singular
+    "channel_id"; coerces every entry to a string (Discord IDs are numeric).
+    """
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("channels")
+    if raw is None:
+        raw = payload.get("watching")
+    if raw is None:
+        single = payload.get("channel_id")
+        raw = [single] if single is not None else []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(c) for c in raw if c is not None and str(c) != ""]
+
+
+class ChannelLivenessStore:
+    """Records the last time each TRACKED channel was observed alive.
+
+    The Discord extension cannot prove it is still capturing merely by staying
+    open: its MutationObserver can be silently orphaned when Discord re-mounts
+    the message list (see extension/content.js). So the extension emits a
+    periodic per-channel beacon AND every captured signal stamps its channel.
+    We persist the most-recent timestamp per channel to a JSON file that
+    bin/agent-watchdog reads from a separate process to alert when any tracked
+    channel goes silent — distinguishing "trader went quiet" (beacon still
+    fresh) from "that channel's capture died" (beacon stale).
+
+    File shape (self-describing so the watchdog needs no policy access)::
+
+        {
+          "tracked":   ["mystic", "wallstengine", ...],   # all mapped names
+          "channels":  {"mystic": "<iso8601 Z>", ...},    # last-seen per name
+          "updated_at": "<iso8601 Z>"
+        }
+    """
+
+    def __init__(self, channel_map: dict[str, str],
+                 path: "str | Path" = DEFAULT_LIVENESS_PATH) -> None:
+        self._channel_map = dict(channel_map)
+        # Roster of canonical names, de-duped, insertion order preserved.
+        self._tracked = list(dict.fromkeys(channel_map.values()))
+        self._channels: dict[str, str] = {}
+        self._path = Path(path)
+        self._lock = threading.Lock()
+
+    @property
+    def tracked(self) -> list[str]:
+        return list(self._tracked)
+
+    def seed(self, now_iso: str) -> None:
+        """Stamp every tracked channel at startup (optimistic cold-start).
+
+        Seeding avoids a spurious "stale" verdict during the first beacon
+        interval, while a channel whose beacon never arrives still ages past
+        the watchdog's staleness threshold and fires.
+        """
+        with self._lock:
+            for name in self._tracked:
+                self._channels.setdefault(name, now_iso)
+            self._flush_locked(now_iso)
+
+    def record_ids(self, channel_ids: Optional[Iterable[str]], now_iso: str) -> None:
+        """Stamp last-seen=now for each mapped (tracked) channel ID. No-op for
+        unmapped IDs or an empty/None input."""
+        if not channel_ids:
+            return
+        with self._lock:
+            changed = False
+            for cid in channel_ids:
+                if cid is None:
+                    continue
+                name = self._channel_map.get(str(cid))
+                if name is None:
+                    continue  # untracked channel — ignore
+                self._channels[name] = now_iso
+                changed = True
+            if changed:
+                self._flush_locked(now_iso)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "tracked": list(self._tracked),
+                "channels": dict(self._channels),
+            }
+
+    def _flush_locked(self, now_iso: str) -> None:
+        payload = {
+            "tracked": list(self._tracked),
+            "channels": dict(self._channels),
+            "updated_at": now_iso,
+        }
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(payload))
+            tmp.replace(self._path)  # atomic rename so readers never see a partial write
+        except OSError as e:
+            logger.warning("Failed to write channel liveness file %s: %s", self._path, e)
 
 
 MAX_BUFFER = 100
@@ -102,7 +221,8 @@ class BridgeSocketClient:
 
 
 def _make_handler(channel_map: dict[str, str], client: BridgeSocketClient,
-                  loop: asyncio.AbstractEventLoop):
+                  loop: asyncio.AbstractEventLoop,
+                  liveness: "ChannelLivenessStore | None" = None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             logger.info("forwarder %s - " + fmt, self.address_string(), *args)
@@ -119,14 +239,35 @@ def _make_handler(channel_map: dict[str, str], client: BridgeSocketClient,
         def do_OPTIONS(self):
             self._respond(204)
 
+        def _read_json(self):
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length) if length else b""
+            if not raw:
+                return {}
+            return json.loads(raw.decode())
+
+        def _handle_beacon(self):
+            # Liveness-only ping: stamp the watched channels and ack. Never
+            # touches the bridge socket, so it stays cheap even under backpressure.
+            try:
+                payload = self._read_json()
+            except Exception:
+                logger.exception("Bad JSON from extension beacon")
+                self._respond(400)
+                return
+            if liveness is not None:
+                liveness.record_ids(beacon_channel_ids(payload), _utc_now_iso())
+            self._respond(204)
+
         def do_POST(self):
+            if self.path == "/beacon":
+                self._handle_beacon()
+                return
             if self.path != "/signal":
                 self._respond(404)
                 return
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            raw = self.rfile.read(length) if length else b""
             try:
-                payload = json.loads(raw.decode())
+                payload = self._read_json()
             except Exception:
                 logger.exception("Bad JSON from extension")
                 self._respond(400)
@@ -137,6 +278,11 @@ def _make_handler(channel_map: dict[str, str], client: BridgeSocketClient,
                 logger.info("Dropping unmapped channel_id=%s", payload.get("channel_id"))
                 self._respond(204)
                 return
+
+            # A captured signal also proves this channel's capture is alive —
+            # stamp liveness on receipt, independent of bridge-socket health.
+            if liveness is not None:
+                liveness.record_ids([payload.get("channel_id")], _utc_now_iso())
 
             envelope = build_envelope(
                 channel=channel,
@@ -160,11 +306,14 @@ def _make_handler(channel_map: dict[str, str], client: BridgeSocketClient,
 
 
 async def run_forwarder(host: str, port: int, socket_path: str,
-                        channel_map: dict[str, str]) -> None:
+                        channel_map: dict[str, str],
+                        liveness_path: "str | Path" = DEFAULT_LIVENESS_PATH) -> None:
     """Run the HTTP forwarder until cancelled."""
     loop = asyncio.get_running_loop()
     client = BridgeSocketClient(socket_path)
-    handler_cls = _make_handler(channel_map, client, loop)
+    liveness = ChannelLivenessStore(channel_map, path=liveness_path)
+    liveness.seed(_utc_now_iso())
+    handler_cls = _make_handler(channel_map, client, loop, liveness)
     httpd = ThreadingHTTPServer((host, port), handler_cls)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

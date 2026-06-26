@@ -62,6 +62,14 @@ execution:
   max_equity_price: 500.0
   reconciler_interval_seconds: 60
   margin_multiplier: 2.0
+  # Aggregate spending cap: total open deployed notional (cost basis of all
+  # currently-open filled positions + the order being sized) must not exceed
+  # net_liquidation * max_deployed_pct. Fraction of net liq; 1.0 = 100%.
+  # Conservative default -- caps aggregate deployed capital at account equity
+  # even though per-order sizing uses margin (margin_multiplier above) and the
+  # broker buying-power check independently clamps each order. Raise to allow
+  # aggregate margin. ExposureGuard fails safe (skips) if exposure is unreadable.
+  max_deployed_pct: 1.0
   options_chase_threshold_pct: 0.10
   # Marketable-limit slippage caps (limit = live_ask * (1 + cap)).
   options_slippage_cap_pct: 0.05
@@ -88,6 +96,6 @@ execution:
 discord_extension:
   forwarder_port: 9876
   channel_id_map:
-    "1229546005788098580": stocktalkweekly
+    "1229546005788098580": stocktalkweekly   # Discord channel "live-notes-portfolio" (renamed; trader still STW)
     "1217309136681832540": mystic
-    "1248378121451733083": wallstengine
+    "1248378121451733083": wallstengine      # Discord channel "wall-st-engine"

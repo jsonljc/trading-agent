@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -67,10 +68,60 @@ def load_responses(path: str | Path) -> dict[str, dict]:
     return by_msg
 
 
+class RecordingLLM:
+    """Wraps the live LLM client and records every (msg -> raw response) so a
+    REAL-accuracy run can be replayed offline by RecordedLLM.
+
+    Memoizes by message: the eval classifies each message once per trader-subset
+    AND once pooled, so the same message reaches classify() several times — we
+    call the live model only once per unique message (cost + determinism) and
+    flush a deduped cache that load_responses() can read back.
+    """
+
+    def __init__(self, inner, out_path: str | Path):
+        self._inner = inner
+        self._path = Path(out_path)
+        self._by_msg: dict[str, dict] = {}
+
+    async def classify(self, *, system, model, messages) -> dict:
+        msg = messages[0]["content"]
+        if msg not in self._by_msg:
+            self._by_msg[msg] = await self._inner.classify(
+                system=system, model=model, messages=messages)
+        return self._by_msg[msg]
+
+    def flush(self) -> int:
+        """Write the deduped msg->response cache as JSONL. Returns line count."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps({"msg": m, "response": r})
+                 for m, r in self._by_msg.items()]
+        self._path.write_text("\n".join(lines) + ("\n" if lines else ""))
+        return len(lines)
+
+
+def _require_api_key() -> None:
+    """Fail loudly if the API key is absent. Without it every live call errors
+    and the classifier forces SKIP, producing a misleading low 'accuracy'
+    instead of an obvious failure (the exact trap that hid behind a fake 33%)."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise SystemExit(
+            "error: ANTHROPIC_API_KEY is not set. The --live-llm/--record path "
+            "needs it — load it from .env (pip install python-dotenv) or export "
+            "it before running.")
+
+
 def _build_live_llm():
     """Construct the real Anthropic-backed classifier client (live path only)."""
     import anthropic
 
+    # The live/record paths need ANTHROPIC_API_KEY; load it from .env the same
+    # way main.py does (the offline --responses path never reaches here).
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+    _require_api_key()
     return AnthropicClassifierClient(anthropic.AsyncAnthropic())
 
 
@@ -206,19 +257,31 @@ def main(argv=None) -> int:
     parser.add_argument("--live-llm", action="store_true",
                         help="use the real AnthropicClassifierClient (the only "
                              "path that makes live calls)")
+    parser.add_argument("--record", default=None, metavar="FILE",
+                        help="run the live LLM AND write a replayable "
+                             "msg->response cache to FILE (implies --live-llm). "
+                             "Use this to capture a REAL-accuracy cache, then "
+                             "commit it for deterministic regression runs.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     if args.responses:
         llm = RecordedLLM(load_responses(args.responses))
+    elif args.record:
+        llm = RecordingLLM(_build_live_llm(), args.record)
     elif args.live_llm:
         llm = _build_live_llm()
     else:
-        print("error: provide --responses FILE for a deterministic run, or "
-              "--live-llm to measure real accuracy", file=sys.stderr)
+        print("error: provide --responses FILE for a deterministic run, "
+              "--live-llm to measure real accuracy, or --record FILE to measure "
+              "AND save a replayable cache", file=sys.stderr)
         return 2
 
-    return asyncio.run(_amain(args, llm))
+    rc = asyncio.run(_amain(args, llm))
+    if isinstance(llm, RecordingLLM):
+        n = llm.flush()
+        print(f"recorded {n} live responses to {args.record}", file=sys.stderr)
+    return rc
 
 
 if __name__ == "__main__":

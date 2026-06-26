@@ -20,7 +20,7 @@ def _round_half_up_min1(n: float) -> int:
 
 
 async def fire_rung_if_crossed(
-    *, gw, trim_store, intent_id: str, ticker: str,
+    *, gw, trim_store, exits_store, intent_id: str, ticker: str,
     avg_fill_price: float, original_qty: int,
     rung: int, threshold_pct: float, trim_pct: float,
     current_price: float, slippage_cap_pct: float = 0.01,
@@ -29,13 +29,22 @@ async def fire_rung_if_crossed(
     if current_price < threshold_price:
         return False
 
+    # Never trim more than the shares actually still held. remaining_qty nets
+    # prior trim fires AND trader-followed exits against the original fill, so a
+    # position we've already (fully or partly) exited cannot be re-sold into a
+    # short. Checked BEFORE the claim so an un-sellable rung is left for a later
+    # tick rather than silently consumed.
+    remaining_held = await exits_store.remaining_qty(intent_id)
+    if remaining_held <= 0:
+        return False
+
     # Claim the rung before placing the order so an overlapping tick cannot
     # double-fire while wait_fill is in-flight.
     started_at = datetime.now(timezone.utc).isoformat()
     if not await trim_store.claim_for_fire(intent_id, rung, started_at):
         return False  # another tick already owns this rung
 
-    trim_qty = _round_half_up_min1(original_qty * trim_pct)
+    trim_qty = min(_round_half_up_min1(original_qty * trim_pct), remaining_held)
     contract = await gw.qualify_equity(ticker)
     # Marketable SELL limit: floor slippage at current_price * (1 - cap) so a
     # thin book can't dump the trim well below market (was a naked MKT sell).
@@ -93,11 +102,12 @@ def _in_rth(now_eastern: datetime) -> bool:
 
 
 class ExitLadder:
-    def __init__(self, gateway, intent_store, trim_store, *,
+    def __init__(self, gateway, intent_store, trim_store, exits_store, *,
                  poll_interval_seconds: int, slippage_cap_pct: float = 0.01):
         self._gw = gateway
         self._intents = intent_store
         self._trims = trim_store
+        self._exits = exits_store
         self._interval = poll_interval_seconds
         self._cap = slippage_cap_pct
         self._task: asyncio.Task | None = None
@@ -137,13 +147,17 @@ class ExitLadder:
             intent = await self._intents.get(intent_id)
             if not intent or intent["execution_state"] != "filled":
                 continue
+            # Skip positions already fully exited (trader-followed sell or prior
+            # trims): nothing left to trim, and firing would short the position.
+            if await self._exits.remaining_qty(intent_id) <= 0:
+                continue
             try:
                 current_price = await self._gw.get_quote(intent["ticker"])
             except IBGatewayUnavailable:
                 continue
             for r in sorted(rungs, key=lambda x: x["rung"]):
                 fired = await fire_rung_if_crossed(
-                    gw=self._gw, trim_store=self._trims,
+                    gw=self._gw, trim_store=self._trims, exits_store=self._exits,
                     intent_id=intent_id, ticker=intent["ticker"],
                     avg_fill_price=intent["fill_price"],
                     original_qty=intent["fill_qty"],
