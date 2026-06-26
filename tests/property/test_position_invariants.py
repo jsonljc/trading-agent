@@ -39,6 +39,7 @@ class PositionInvariantMachine(RuleBasedStateMachine):
         self._fill: dict[str, int] = {}                 # intent_id -> fill_qty
         self._rungs: dict[str, dict[int, dict]] = {}    # intent_id -> {rung: meta}
         self._fp_positive: dict[str, int] = {}          # fingerprint -> #positive invocations
+        self._positive_fires: dict[tuple[str, int], int] = {}  # (intent_id, rung) -> #positive fires
         self.gw = FakeGateway()
         self._conn = self._run(self._connect())
         self.intents_store = TradeIntentStore(self._conn)
@@ -107,6 +108,8 @@ class PositionInvariantMachine(RuleBasedStateMachine):
         # `fired` is True only when a positive fill was recorded (full/partial>0).
         if fired:
             meta["recorded"] = True
+            key = (intent, rung)
+            self._positive_fires[key] = self._positive_fires.get(key, 0) + 1
 
     @rule(intent=intents, rung=st.sampled_from([1, 2, 3]))
     def crash_during_trim(self, intent, rung):
@@ -186,6 +189,15 @@ class PositionInvariantMachine(RuleBasedStateMachine):
                 if r["sold_qty"] is not None:
                     assert r["fired_at"] is not None, (
                         f"{intent_id} rung {r['rung']}: sold_qty set but not fired_at")
+        # Shadow counter must never exceed 1 per rung (the claim gate is the real guard).
+        for (intent_id, rung), count in self._positive_fires.items():
+            assert count <= 1, (
+                f"{intent_id} rung {rung}: {count} positive fires recorded (double-fire!)")
+            # The shadow's positive belief must agree with the persisted ledger.
+            rows = self._run(self.trims.all_for_intent(intent_id))
+            db_row = next((r for r in rows if r["rung"] == rung), None)
+            assert db_row is not None and db_row["sold_qty"] is not None, (
+                f"{intent_id} rung {rung}: shadow says fired but DB has no sold_qty")
 
     # ----------------------------------------------------------------- helpers
     async def _recorded_trims(self, intent_id: str) -> tuple[int, int]:

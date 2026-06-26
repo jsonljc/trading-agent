@@ -75,6 +75,6 @@ class FakeGateway:
             last_status=("Filled" if status == FillStatus.FILLED else "Submitted"),
             status_timestamp="2026-06-26T14:30:00+00:00")
 
-    async def cancel_order(self, trade) -> bool:
+    async def cancel_order(self, trade, timeout: float = 5.0) -> bool:
         self.cancels += 1
         return True
