@@ -188,6 +188,16 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
             # actionable entry was dropped (consistent with broker-down alerts).
             await digest_skill.send_missed_signal_alert(
                 ctx, "kill switch engaged — new entry halted")
+        elif TelegramDigest.is_missed_entry_skip(ctx, reason):
+            # DEGRADED/MISSED entry-skips the agent would otherwise drop SILENTLY:
+            # classifier llm_error / drop_low_conf / ticker_not_in_msg (halts at
+            # EntrySkipGate as "no_entry:bucket=SKIP"), unknown author on a tracked
+            # channel (TraderRouter "no_trader_profile:"), or an actionable entry
+            # fired off-session (RthEntryGuard "entry_outside_rth"). A *genuine*
+            # commentary SKIP (size_source="skip") deliberately does NOT match, so
+            # this stays quiet on the common, correct case.
+            await digest_skill.send_missed_signal_alert(
+                ctx, TelegramDigest.missed_entry_reason(ctx, reason))
 
     async def on_success(ctx: Context) -> None:
         await audit_writer.write(ctx, "success")
@@ -259,6 +269,7 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         gateway,
         trade_intent_store,
         trim_store,
+        exits_store,
         poll_interval_seconds=policy.execution.exit_poll_interval_seconds,
         slippage_cap_pct=policy.execution.shares_slippage_cap_pct,
     )
@@ -294,6 +305,7 @@ async def run(socket_path: str, db_path: str, policy_path: str) -> None:
         await heartbeat.stop()
         await exit_ladder.stop()
         await reconciler.stop()
+        await digest_skill.drain()   # flush any in-flight (non-blocking) signal digests
         await gateway.disconnect()
         await conn.close()
 

@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from agent.context import Context
 from skills.posttrade.telegram_digest import TelegramDigest
@@ -28,6 +29,7 @@ async def test_digest_sends_signal_summary():
     skill = TelegramDigest(client, mode="signal_only")
     result = await skill.run(make_ctx())
     assert result.status == "success"
+    await skill.drain()                # signal digest now sends in the background
     assert len(client.sent) == 1
     msg = client.sent[0]
     assert "AVEX" in msg
@@ -44,6 +46,7 @@ async def test_digest_includes_trace_id():
     ctx = make_ctx()
     ctx.trace_id = "trace-abc"
     await skill.run(ctx)
+    await skill.drain()
     assert "trace-abc" in client.sent[0]
 
 
@@ -110,3 +113,26 @@ async def test_order_rejected_alert_is_distinct():
     assert len(client.sent) == 1
     assert "ORDER REJECTED" in client.sent[0]
     assert "DLQ" in client.sent[0]
+
+
+async def test_signal_digest_does_not_block_on_slow_send():
+    """The 'signal parsed' digest must NOT sit on the critical path before the
+    order is placed. A slow/blocked Telegram send (httpx, up to a 10s timeout)
+    must not delay run() — it is fired concurrently and flushed via drain()."""
+    release = asyncio.Event()
+    sent: list[str] = []
+
+    class SlowClient:
+        async def send_message(self, text: str) -> None:
+            await release.wait()
+            sent.append(text)
+
+    skill = TelegramDigest(SlowClient(), mode="signal_only")
+    # run() returns immediately even though the send is still blocked.
+    result = await asyncio.wait_for(skill.run(make_ctx()), timeout=1.0)
+    assert result.status == "success"
+    assert sent == []                  # send scheduled, not yet completed
+    release.set()
+    await skill.drain()                # flush the backgrounded send
+    assert len(sent) == 1
+    assert "AVEX" in sent[0]

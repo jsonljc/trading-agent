@@ -113,6 +113,17 @@ class ExecutionPolicy(BaseModel):
     # walk_profile, walk_profiles, reprice_interval_ms, max_chase_pct removed
     # (dead — PriceWalker bypassed by MKT chain)
     margin_multiplier: float = 2.0
+    # Aggregate spending ceiling. Total open *deployed notional* (cost basis of
+    # every currently-open filled long position + the order being sized) must not
+    # exceed net_liquidation x max_deployed_pct. A FRACTION of net liq (1.0 =
+    # 100%). Conservative default 1.0: aggregate deployed capital never exceeds
+    # account equity, even though per-order sizing may use margin
+    # (margin_multiplier) and the live buying-power clamp permits it -- this is a
+    # second, policy-level ceiling layered on top of the broker buying-power
+    # check. Raise it to deploy aggregate margin. Enforced by skills/risk
+    # ExposureGuard + OrderSizer; the guard fails safe (skips the entry) if open
+    # exposure cannot be read.
+    max_deployed_pct: float = Field(default=1.0, ge=0.0)
     options_chase_threshold_pct: float = 0.10
     # Marketable-limit slippage caps: limit = live_ask * (1 + cap). Options
     # spreads are wide, so the options cap is looser than the shares cap.

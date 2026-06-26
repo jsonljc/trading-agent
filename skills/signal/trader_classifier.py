@@ -61,11 +61,16 @@ class TraderClassifier(Skill):
             availability_phrases=profile.availability_phrases,
         )
 
-        # Deterministic shortcut: stated size + entry verb + exactly one ticker.
+        # Deterministic shortcut: stated size + entry verb + exactly one ticker,
+        # and NO exit verb — otherwise "took profits on $NVDA, still holding a 5%
+        # position" (entry verb "took" + a stated "5% position") would misfire as
+        # a confidence-1.0 BUY. Exit/ambiguous phrasing falls through to the LLM,
+        # which actually reads side.
         if (
             profile.prefer_message_size
             and features.stated_size_pct is not None
             and features.entry_verb_present
+            and not features.exit_verb_present
             and len(features.tickers_in_msg) == 1
         ):
             bucket = "HIGH" if features.stated_size_pct >= SMALL_SIZE_THRESHOLD else "LOW"

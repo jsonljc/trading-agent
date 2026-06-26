@@ -298,3 +298,27 @@ async def test_wse_small_size_override_unaffected_without_floor():
     result = await classifier.run(ctx)
     assert ctx.get("bucket") == "LOW"
     assert ctx.get("size_source") == "wse_small_size_override"
+
+
+@pytest.mark.asyncio
+async def test_shortcut_does_not_fire_on_profit_taking_exit():
+    """A profit-taking message that states a remaining size must NOT take the
+    deterministic BUY shortcut (which hardcodes side=long, confidence=1.0).
+    'took profits' is an exit verb, so the message must fall through to the LLM
+    — which classifies it SKIP — rather than auto-firing a BUY."""
+    profile = make_profile()  # prefer_message_size=True
+    registry = TraderRegistry([profile])
+    llm = FakeLLM({"is_entry": False, "ticker": None, "side": "none",
+                   "bucket": "SKIP", "confidence": 0.95, "reason": "profit taking, not an entry"})
+    classifier = TraderClassifier(registry, llm)
+    ctx = Context(trace_id="t", event_id="e", data={
+        "author": "Wall St Engine", "trader_handle": "wse",
+        "full_message_text": "took profits on $NVDA, still holding a 5% position",
+    })
+
+    result = await classifier.run(ctx)
+
+    assert result.status == "success"
+    assert len(llm.calls) == 1, "exit phrasing must reach the LLM, not the shortcut"
+    assert ctx.get("size_source") != "shortcut_stated"
+    assert ctx.get("bucket") == "SKIP"
