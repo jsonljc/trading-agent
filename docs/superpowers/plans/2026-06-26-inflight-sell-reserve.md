@@ -710,6 +710,202 @@ The branch is `fix/inflight-sell-reserve`. Because PR #14 (`feat/money-safety-in
 
 ---
 
+### Task 6: Close the residual prepare-window race (reserve before any broker round-trip)
+
+**Added after the whole-branch review found §3a was NARROWED, not CLOSED:** `follow_sell_position` reserved AFTER `qualify_equity`/`get_quote` (two `await`s), and `SellFollower.run` sizes the sell from a `remaining_qty` read — so the sell's read→reserve was NOT atomic (unlike the trim's atomic read→claim at `exit_ladder.py:37→44`). A concurrent ExitLadder trim firing in the qualify/quote window could still record 150 of 100. This task makes the reserve the FIRST action so read→reserve is atomic, fully closing §3a.
+
+**Files:**
+- Modify: `tests/support/fake_gateway.py` (add a one-shot `on_qualify` hook)
+- Modify: `tests/property/test_inflight_sell_oversell.py` (add the prepare-window probe)
+- Modify: `skills/execution/sell_follower.py` (`follow_sell_position`: reserve first; widen the `try`)
+
+**Interfaces:**
+- Consumes: `reserve_exit`/`finalize_exit` (Task 1); `fire_rung_if_crossed`, `FakeGateway`, real stores (already imported in the probe file).
+- Produces: `FakeGateway.on_qualify` (one-shot async callback fired inside `qualify_equity`); `follow_sell_position` unchanged signature/return.
+
+- [ ] **Step 1: Add the `on_qualify` one-shot hook to FakeGateway**
+
+In `tests/support/fake_gateway.py`, in `__init__`, immediately after the `self.on_wait_fill = None` line, add:
+
+```python
+        # §3a hook (prepare window): a one-shot async callback run INSIDE
+        # qualify_equity, i.e. while a sell is being prepared (before place).
+        # Lets a test inject a concurrent trim during the sell's prepare step.
+        self.on_qualify: Optional[Callable[[], Awaitable[None]]] = None
+```
+
+Then change `qualify_equity` from:
+
+```python
+    async def qualify_equity(self, ticker: str) -> BrokerContractRef:
+        return BrokerContractRef(symbol=ticker, sec_type="STK", exchange="SMART",
+                                 currency="USD", qualified=True)
+```
+
+to:
+
+```python
+    async def qualify_equity(self, ticker: str) -> BrokerContractRef:
+        if self.on_qualify is not None:
+            cb, self.on_qualify = self.on_qualify, None  # one-shot
+            await cb()
+        return BrokerContractRef(symbol=ticker, sec_type="STK", exchange="SMART",
+                                 currency="USD", qualified=True)
+```
+
+- [ ] **Step 2: Write the failing prepare-window probe**
+
+In `tests/property/test_inflight_sell_oversell.py`, append at the end of the file:
+
+```python
+@pytest.mark.asyncio
+async def test_inflight_sell_concurrent_trim_during_prepare_does_not_oversell():
+    """§3a closure: a trim firing during the sell's PREPARE window (inside
+    qualify_equity, before place) must not oversell either. follow_sell_position
+    reserves before any broker round-trip, so the concurrent trim reads
+    remaining_qty=0 and short-circuits. If the reserve happened after
+    qualify/quote, this would record 150 of 100."""
+    async with aiosqlite.connect(":memory:") as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(SCHEMA)
+        await conn.commit()
+        intents = TradeIntentStore(conn)
+        trims = TrimLadderStore(conn)
+        exits = PositionExitStore(conn)
+
+        fill_qty = 100
+        intent_id = "e1:AAPL:long"
+        await intents.insert(make_filled_intent(
+            intent_id, channel="mystic", ticker="AAPL", fill_qty=fill_qty, seq=1))
+        await trims.arm(intent_id, rungs=[(1, 0.05, 0.50)],
+                        armed_at="2026-06-26T14:30:00+00:00")
+
+        gw = FakeGateway()  # full fills
+
+        # Fire the trim through the REAL ladder path during the sell's prepare
+        # step (inside qualify_equity), i.e. BEFORE the sell places its order.
+        async def concurrent_trim():
+            await fire_rung_if_crossed(
+                gw=gw, trim_store=trims, exits_store=exits,
+                intent_id=intent_id, ticker="AAPL", avg_fill_price=100.0,
+                original_qty=fill_qty, rung=1, threshold_pct=0.05, trim_pct=0.50,
+                current_price=106.0, slippage_cap_pct=0.01)
+        gw.on_qualify = concurrent_trim
+
+        sold = await follow_sell_position(
+            gw=gw, exits_store=exits, fingerprint="fp-1", event_id="evt-sell",
+            intent_id=intent_id, channel="mystic", ticker="AAPL", qty=fill_qty,
+            scope="full", slippage_cap_pct=0.01, fill_timeout=5.0)
+
+        recorded_exit = await exits.sold_qty_for_intent(intent_id)
+        recorded_trim = 0
+        for r in await trims.all_for_intent(intent_id):
+            recorded_trim += int(r["sold_qty"] or 0)
+        total_recorded = recorded_exit + recorded_trim
+
+        assert total_recorded <= fill_qty, (
+            f"OVERSELL: recorded {total_recorded} (exit={recorded_exit} "
+            f"trim={recorded_trim}) > fill {fill_qty}; sold returned {sold}")
+```
+
+- [ ] **Step 3: Run the probe to verify it fails (RED)**
+
+Run: `cd /Users/jasonli/dev/trading-agent && uv run --frozen --extra dev pytest "tests/property/test_inflight_sell_oversell.py::test_inflight_sell_concurrent_trim_during_prepare_does_not_oversell" -p no:cacheprovider -q`
+Expected: FAIL — `OVERSELL: recorded 150 (exit=100 trim=50) > fill 100`. The current code reserves AFTER `qualify_equity`, so the trim fired inside `qualify_equity` reads `remaining_qty=100` and records 50.
+
+- [ ] **Step 4: Reorder `follow_sell_position` — reserve first, widen the try**
+
+In `skills/execution/sell_follower.py`, replace the entire `follow_sell_position` function body (from `async def follow_sell_position(` through `return sold`) with:
+
+```python
+async def follow_sell_position(
+    *, gw, exits_store, fingerprint: str, event_id: str | None, intent_id: str,
+    channel: str | None, ticker: str, qty: int, scope: str,
+    slippage_cap_pct: float, fill_timeout: float,
+) -> int:
+    """Submit a marketable-limit SELL for `qty` shares of one position and record
+    the exit. Returns the actual quantity sold (0 on a non-fill). Mirrors the
+    trim ladder's partial-fill discipline: cancel any residual, record the real
+    fill. Raises IBGatewayUnavailable to the caller (which owns the claim).
+
+    Reserves the full `qty` in the exit ledger as its FIRST action — before any
+    broker round-trip (qualify/quote/place). The caller (SellFollower.run) sizes
+    this sell from a remaining_qty read with no intervening await before calling
+    here, so read->reserve is atomic, fully symmetric to the trim ladder's atomic
+    read->claim. A concurrent trim therefore reads remaining_qty net of this sell
+    for the ENTIRE prepare->place->fill window and cannot oversize (spec §3a).
+    The reserve is corrected to the actual fill once known."""
+    # Reserve FIRST (before qualify/quote/place) so the caller's remaining_qty
+    # read -> this reserve is atomic; a concurrent trim cannot slip into the
+    # prepare window and oversell.
+    exit_id = await exits_store.reserve_exit(
+        fingerprint=fingerprint, event_id=event_id, intent_id=intent_id,
+        channel=channel, ticker=ticker, scope=scope, requested_qty=qty,
+        reason="follow_sell_pending")
+    try:
+        contract = await gw.qualify_equity(ticker)
+        price = await gw.get_quote(ticker)
+        limit = marketable_sell_limit(price, slippage_cap_pct)
+        order = PreparedOrder(action="SELL", quantity=qty, order_type="LMT",
+                              limit_price=limit, tif="DAY")
+        client_order_id = f"{intent_id}:exit:{fingerprint[:16]}"
+        trade = await gw.place_order(contract, order, client_order_id)
+    except IBGatewayUnavailable:
+        # Broker unreachable during prepare or place -> nothing was placed ->
+        # release the reserve so the caller's retry can re-size; re-raise (the
+        # caller owns the claim / retry decision). A non-IBGatewayUnavailable
+        # error is NOT caught: the reserve persists (stuck-until-reconciled),
+        # the safe direction, since the order's state is then unknown.
+        await exits_store.finalize_exit(
+            exit_id, sold_qty=0, sold_avg_price=None, broker_order_ref=None,
+            reason="follow_sell_place_failed")
+        raise
+    # If wait_fill raises, the order may be live at IB: leave the reserve in
+    # place (stuck-until-reconciled), the safe direction -- it can never oversell.
+    fill = await gw.wait_fill(trade, timeout=fill_timeout)
+
+    sold = int(fill.filled_qty) if fill.filled_qty and fill.filled_qty > 0 else 0
+    if fill.status != FillStatus.FILLED:
+        # Cancel any residual working order (zero-fill or partial).
+        try:
+            await gw.cancel_order(trade)
+        except Exception:
+            logger.exception("sell residual cancel failed (order may rest at IB)")
+
+    await exits_store.finalize_exit(
+        exit_id, sold_qty=sold, sold_avg_price=fill.avg_fill_price,
+        broker_order_ref=fill.broker_order_id, reason="follow_sell")
+    if sold < qty:
+        logger.warning("follow_sell %s: sold %d/%d (%s)", intent_id, sold, qty,
+                       fill.last_status)
+    return sold
+```
+
+- [ ] **Step 5: Run the probe to verify it passes (GREEN)**
+
+Run: `cd /Users/jasonli/dev/trading-agent && uv run --frozen --extra dev pytest "tests/property/test_inflight_sell_oversell.py::test_inflight_sell_concurrent_trim_during_prepare_does_not_oversell" -p no:cacheprovider -q`
+Expected: PASS — reserve is now written before `qualify_equity`, so the concurrent trim reads `remaining_qty=0` and short-circuits; `total_recorded == 100`.
+
+- [ ] **Step 6: Re-verify the existing follower + §3a tests stay green**
+
+Run: `cd /Users/jasonli/dev/trading-agent && uv run --frozen --extra dev pytest tests/integration/test_sell_follower.py tests/property/test_inflight_sell_oversell.py -p no:cacheprovider -q`
+Expected: PASS. End-state assertions are unchanged (full fill finalizes `sold=req`; the broker-down test now hits the widened `try` — `place_order` IBGatewayUnavailable is still caught → finalize(0) → release → re-raise — same outcome). The original §3a (wait_fill-window) probe and `test_reserve_is_written_before_place_order` still pass (reserve is now even earlier).
+
+- [ ] **Step 7: Run the full suite (green, 0 xfailed)**
+
+Run: `cd /Users/jasonli/dev/trading-agent && uv run --frozen --extra dev pytest -p no:cacheprovider -q`
+Expected: all passed, `0 xfailed` (one new test added).
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd /Users/jasonli/dev/trading-agent
+git add skills/execution/sell_follower.py tests/support/fake_gateway.py tests/property/test_inflight_sell_oversell.py
+git commit -m "fix(execution): reserve before broker prep; close §3a prepare-window race"
+```
+
+---
+
 ## Self-Review
 
 **1. Spec coverage:**
