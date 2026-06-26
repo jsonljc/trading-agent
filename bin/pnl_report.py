@@ -58,10 +58,13 @@ def _fetch(db_path, *, channel=None, since_entry=None, since_sell=None):
             "FROM trade_intent_trims WHERE fired_at IS NOT NULL")
             if r["intent_id"] in ids
             and (not since_sell or (r["fired_at"] or "") >= since_sell)]
+        # `WHERE sold_qty IS NOT NULL` drops in-flight (pending) sell reserves so
+        # they never reach compute_attribution or the since-sell window as
+        # phantom proceeds. Finalized exits (incl. sold_qty=0 zero-fills) stay.
         exits = [r for r in _safe_fetchall(
             conn,
             "SELECT intent_id, sold_qty, sold_avg_price, created_at "
-            "FROM position_exits")
+            "FROM position_exits WHERE sold_qty IS NOT NULL")
             if r["intent_id"] in ids
             and (not since_sell or (r["created_at"] or "") >= since_sell)]
     finally:

@@ -1,0 +1,312 @@
+"""Stateful money-safety invariants for the position ledger, trim ladder, and
+sell-follower. Drives the REAL stores + REAL SellFollower / fire_rung_if_crossed;
+only the broker is faked. See docs/superpowers/specs/2026-06-26-money-safety-
+invariant-suite-design.md (§3 oracle caveats, §3a finding).
+"""
+from __future__ import annotations
+
+import asyncio
+import math
+
+import aiosqlite
+from hypothesis import HealthCheck, settings
+from hypothesis import strategies as st
+from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, rule
+
+from infra.storage.db import SCHEMA
+from infra.storage.position_exit_store import PositionExitStore
+from infra.storage.trade_intent_store import TradeIntentStore
+from infra.storage.trim_ladder_store import TrimLadderStore
+from agent.context import Context
+from agent.exit_ladder import fire_rung_if_crossed
+from skills.execution.sell_follower import SellFollower, follow_sell_position
+from tests.support.factories import make_filled_intent
+from tests.support.fake_gateway import FakeGateway
+
+
+def _round_half_up_min1(n: float) -> int:
+    return max(1, int(math.floor(n + 0.5)))
+
+
+@settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
+class PositionInvariantMachine(RuleBasedStateMachine):
+    intents = Bundle("intents")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._loop = asyncio.new_event_loop()
+        self._seq = 0
+        self._fill: dict[str, int] = {}                 # intent_id -> fill_qty
+        self._rungs: dict[str, dict[int, dict]] = {}    # intent_id -> {rung: meta}
+        self._fp_positive: dict[str, int] = {}          # fingerprint -> #positive invocations
+        self._positive_fires: dict[tuple[str, int], int] = {}  # (intent_id, rung) -> #positive fires
+        self.gw = FakeGateway()
+        self._conn = self._run(self._connect())
+        self.intents_store = TradeIntentStore(self._conn)
+        self.trims = TrimLadderStore(self._conn)
+        self.exits = PositionExitStore(self._conn)
+
+    async def _connect(self) -> aiosqlite.Connection:
+        conn = await aiosqlite.connect(":memory:")
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(SCHEMA)
+        await conn.commit()
+        return conn
+
+    def _run(self, coro):
+        return self._loop.run_until_complete(coro)
+
+    # ----------------------------------------------------------------- rules
+    @rule(target=intents,
+          channel=st.sampled_from(["mystic", "stp", "wse"]),
+          ticker=st.sampled_from(["AAPL", "NVDA", "TSLA"]),
+          fill_qty=st.integers(min_value=1, max_value=1000))
+    def create_filled_intent(self, channel, ticker, fill_qty):
+        self._seq += 1
+        intent_id = f"e{self._seq}:{ticker}:long"
+        rec = make_filled_intent(intent_id, channel=channel, ticker=ticker,
+                                 fill_qty=fill_qty, seq=self._seq)
+        self._run(self.intents_store.insert(rec))
+        self._fill[intent_id] = fill_qty
+        self._rungs[intent_id] = {}
+        # carry channel/ticker for sell rules added later
+        self._rungs[intent_id]["_meta"] = {"channel": channel, "ticker": ticker}
+        return intent_id
+
+    _LADDER = [(1, 0.05, 0.25), (2, 0.10, 0.25), (3, 0.20, 0.50)]
+
+    @rule(intent=intents)
+    def arm_trims(self, intent):
+        if self._rungs[intent].get("_armed"):
+            return
+        self._run(self.trims.arm(intent, rungs=self._LADDER,
+                                 armed_at="2026-06-26T14:30:00+00:00"))
+        for rung, thr, tp in self._LADDER:
+            self._rungs[intent][rung] = {"threshold_pct": thr, "trim_pct": tp,
+                                         "recorded": False}
+        self._rungs[intent]["_armed"] = True
+
+    @rule(intent=intents,
+          rung=st.sampled_from([1, 2, 3]),
+          fill_mode=st.sampled_from(["full", "partial", "zero"]))
+    def fire_trim(self, intent, rung, fill_mode):
+        meta = self._rungs[intent].get(rung)
+        if meta is None or meta["recorded"]:
+            return  # not armed, or already recorded (real claim would reject anyway)
+        fill_qty = self._fill[intent]
+        ticker = self._rungs[intent]["_meta"]["ticker"]
+        # current_price crosses this rung's threshold deterministically.
+        current_price = 100.0 * (1.0 + meta["threshold_pct"]) + 1.0
+        self.gw.fill_mode = fill_mode
+        self.gw.unavailable = False
+        fired = self._run(fire_rung_if_crossed(
+            gw=self.gw, trim_store=self.trims, exits_store=self.exits,
+            intent_id=intent, ticker=ticker, avg_fill_price=100.0,
+            original_qty=fill_qty, rung=rung,
+            threshold_pct=meta["threshold_pct"], trim_pct=meta["trim_pct"],
+            current_price=current_price, slippage_cap_pct=0.01))
+        # `fired` is True only when a positive fill was recorded (full/partial>0).
+        if fired:
+            meta["recorded"] = True
+            key = (intent, rung)
+            self._positive_fires[key] = self._positive_fires.get(key, 0) + 1
+
+    @rule(intent=intents, rung=st.sampled_from([1, 2, 3]))
+    def crash_during_trim(self, intent, rung):
+        """Simulate a crash mid-fire: claim the rung (in-flight reserve persists),
+        then 'die' before recording. all_unfired() excludes it, so it is never
+        auto-re-fired; remaining_qty reserves it, so later sells cannot oversell."""
+        meta = self._rungs[intent].get(rung)
+        if meta is None or meta["recorded"]:
+            return
+        claimed = self._run(self.trims.claim_for_fire(
+            intent, rung, "2026-06-26T14:30:00+00:00"))
+        if claimed:
+            # Mark recorded=True in shadow so fire_trim won't try to fire it
+            # (a real restart leaves it stuck in-flight, not fireable).
+            meta["recorded"] = True
+            meta["stuck"] = True
+
+    @rule(intent=intents,
+          scope=st.sampled_from(["full", "partial"]),
+          fraction=st.floats(min_value=0.1, max_value=1.0),
+          fp_key=st.integers(min_value=0, max_value=3),  # small pool -> forces reposts
+          fill_mode=st.sampled_from(["full", "partial", "zero"]),
+          unavailable=st.booleans())
+    def follow_sell(self, intent, scope, fraction, fp_key, fill_mode, unavailable):
+        meta = self._rungs[intent]["_meta"]
+        channel, ticker = meta["channel"], meta["ticker"]
+        fingerprint = f"fp-{channel}-{ticker}-{fp_key}"
+        self._seq += 1
+        event_id = f"sell{self._seq}"
+
+        # positive-recording invocations for this fingerprint BEFORE the run
+        before = self._run(self._positive_exit_count(fingerprint))
+
+        self.gw.fill_mode = fill_mode
+        self.gw.unavailable = unavailable
+        ctx = Context(trace_id="t", event_id=event_id)
+        ctx.update({"action": "sell", "sell_ticker": ticker, "sell_scope": scope,
+                    "sell_fraction": fraction, "channel": channel,
+                    "message_fingerprint": fingerprint})
+        follower = SellFollower(self.gw, self.intents_store, self.exits,
+                                slippage_cap_pct=0.01, fill_timeout=5.0,
+                                is_rth=lambda: True)
+        try:
+            self._run(follower.run(ctx))
+        finally:
+            self.gw.unavailable = False  # reset for later rules (even on error)
+
+        after = self._run(self._positive_exit_count(fingerprint))
+        if after > before:
+            self._fp_positive[fingerprint] = self._fp_positive.get(fingerprint, 0) + 1
+
+    async def _positive_exit_count(self, fingerprint: str) -> int:
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM position_exits WHERE fingerprint=? AND sold_qty>0",
+            (fingerprint,),
+        ) as cur:
+            row = await cur.fetchone()
+        return int(row[0] or 0)
+
+    @rule(intent=intents, rung=st.sampled_from([1, 2, 3]),
+          fp_key=st.integers(min_value=0, max_value=3))
+    def inflight_sell_with_concurrent_trim(self, intent, rung, fp_key):
+        """N3: while a trader-sell is placed-but-unrecorded (inside wait_fill),
+        fire a REAL trim rung against the REAL remaining_qty. The in-flight sell
+        reserve must make remaining_qty exclude the shares this sell is taking,
+        so the concurrent trim short-circuits and cannot oversize. The
+        never_oversell / remaining_qty_identity invariants then verify it.
+        (Randomized generalization of the §3a probe.)"""
+        meta = self._rungs[intent].get(rung)
+        if meta is None or meta["recorded"]:
+            return  # rung not armed, already fired, or stuck-claimed
+        rem = self._run(self.exits.remaining_qty(intent))
+        if rem <= 0:
+            return  # nothing to sell -> no in-flight window to exercise
+        channel = self._rungs[intent]["_meta"]["channel"]
+        ticker = self._rungs[intent]["_meta"]["ticker"]
+        fill_qty = self._fill[intent]
+        self._seq += 1
+        fingerprint = f"inflight-{channel}-{ticker}-{fp_key}-{self._seq}"
+
+        async def concurrent_trim():
+            # current_price deterministically crosses this rung's threshold.
+            price = 100.0 * (1.0 + meta["threshold_pct"]) + 1.0
+            fired = await fire_rung_if_crossed(
+                gw=self.gw, trim_store=self.trims, exits_store=self.exits,
+                intent_id=intent, ticker=ticker, avg_fill_price=100.0,
+                original_qty=fill_qty, rung=rung,
+                threshold_pct=meta["threshold_pct"], trim_pct=meta["trim_pct"],
+                current_price=price, slippage_cap_pct=0.01)
+            if fired:
+                meta["recorded"] = True
+                key = (intent, rung)
+                self._positive_fires[key] = self._positive_fires.get(key, 0) + 1
+
+        self.gw.fill_mode = "full"
+        self.gw.unavailable = False
+        self.gw.on_wait_fill = concurrent_trim
+        try:
+            self._run(follow_sell_position(
+                gw=self.gw, exits_store=self.exits, fingerprint=fingerprint,
+                event_id=f"evt-{fingerprint}", intent_id=intent, channel=channel,
+                ticker=ticker, qty=rem, scope="full", slippage_cap_pct=0.01,
+                fill_timeout=5.0))
+        finally:
+            self.gw.on_wait_fill = None
+            self.gw.unavailable = False
+
+    @invariant()
+    def claim_once_idempotency(self):
+        # INV-2: at most one SellFollower invocation records a positive-qty exit
+        # per fingerprint (zero-fill sold_qty=0 rows and released retries excepted).
+        for fingerprint, count in self._fp_positive.items():
+            assert count <= 1, (
+                f"{fingerprint}: {count} invocations recorded a positive sell")
+
+    @invariant()
+    def no_trim_double_fire(self):
+        # INV-3: each rung records a positive fire at most once.
+        for intent_id in self._fill:
+            for r in self._run(self.trims.all_for_intent(intent_id)):
+                # A recorded rung has non-NULL sold_qty (record_fire only runs on
+                # filled_qty>0). No row can be recorded twice: the claim gate
+                # blocks a second claim until release, and a recorded rung is
+                # never released. Assert via the shadow: recorded rungs stay recorded.
+                if r["sold_qty"] is not None:
+                    assert r["fired_at"] is not None, (
+                        f"{intent_id} rung {r['rung']}: sold_qty set but not fired_at")
+        # Shadow counter must never exceed 1 per rung (the claim gate is the real guard).
+        for (intent_id, rung), count in self._positive_fires.items():
+            assert count <= 1, (
+                f"{intent_id} rung {rung}: {count} positive fires recorded (double-fire!)")
+            # The shadow's positive belief must agree with the persisted ledger.
+            rows = self._run(self.trims.all_for_intent(intent_id))
+            db_row = next((r for r in rows if r["rung"] == rung), None)
+            assert db_row is not None and db_row["sold_qty"] is not None, (
+                f"{intent_id} rung {rung}: shadow says fired but DB has no sold_qty")
+
+    # ----------------------------------------------------------------- helpers
+    async def _recorded_trims(self, intent_id: str) -> tuple[int, int]:
+        """Mirror PositionExitStore.remaining_qty's trim handling: recorded
+        sold_qty wins; else an in-flight rung (fire_started_at set, fired_at NULL)
+        reserves round_half_up_min1(fill_qty*trim_pct)."""
+        fill_qty = self._fill[intent_id]
+        recorded = reserves = 0
+        for r in await self.trims.all_for_intent(intent_id):
+            if r["sold_qty"] is not None:
+                recorded += int(r["sold_qty"])
+            elif r["fire_started_at"] is not None and r["fired_at"] is None:
+                reserves += _round_half_up_min1(fill_qty * r["trim_pct"])
+        return recorded, reserves
+
+    async def _exit_contribution(self, intent_id: str) -> tuple[int, int]:
+        """Mirror remaining_qty's exit term from first principles: a finalized
+        exit (sold_qty set) contributes sold_qty; an in-flight reserve (sold_qty
+        NULL) contributes requested_qty."""
+        recorded = reserved = 0
+        async with self._conn.execute(
+            "SELECT sold_qty, requested_qty FROM position_exits WHERE intent_id=?",
+            (intent_id,),
+        ) as cur:
+            for sold_qty, requested_qty in await cur.fetchall():
+                if sold_qty is not None:
+                    recorded += int(sold_qty)
+                else:
+                    reserved += int(requested_qty or 0)
+        return recorded, reserved
+
+    # ----------------------------------------------------------------- oracle
+    @invariant()
+    def remaining_qty_identity(self):
+        for intent_id, fill_qty in self._fill.items():
+            rem = self._run(self.exits.remaining_qty(intent_id))
+            rec_trims, trim_reserves = self._run(self._recorded_trims(intent_id))
+            rec_exits, exit_reserves = self._run(self._exit_contribution(intent_id))
+            expected = max(0, fill_qty - rec_trims - trim_reserves
+                           - rec_exits - exit_reserves)
+            assert rem == expected, (
+                f"{intent_id}: remaining_qty={rem} != {expected} "
+                f"(fill={fill_qty} trims={rec_trims} trim_reserves={trim_reserves} "
+                f"exits={rec_exits} exit_reserves={exit_reserves})")
+            assert rem >= 0, f"{intent_id}: negative remaining {rem}"
+
+    @invariant()
+    def never_oversell(self):
+        # INV-1: sum of RECORDED trim + exit sold_qty <= fill_qty (per intent).
+        for intent_id, fill_qty in self._fill.items():
+            rec_trims, _ = self._run(self._recorded_trims(intent_id))
+            rec_exits = self._run(self.exits.sold_qty_for_intent(intent_id))
+            assert rec_trims + rec_exits <= fill_qty, (
+                f"{intent_id}: OVERSELL recorded {rec_trims + rec_exits} > fill {fill_qty}")
+
+    def teardown(self):
+        if getattr(self, "_conn", None) is not None:
+            self._run(self._conn.close())
+            self._conn = None
+        if not self._loop.is_closed():
+            self._loop.close()
+
+
+TestPositionInvariants = PositionInvariantMachine.TestCase

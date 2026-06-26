@@ -115,3 +115,53 @@ async def test_migration_creates_exit_tables_on_legacy_db(tmp_path):
                 assert await cur.fetchone() is not None, tbl
     finally:
         await conn.close()
+
+
+async def test_reserve_exit_reserves_full_requested_qty(db):
+    intents = TradeIntentStore(db)
+    exits = PositionExitStore(db)
+    await intents.insert(_intent("e1:AAPL:long", fill_qty=100))
+    assert await exits.remaining_qty("e1:AAPL:long") == 100
+
+    exit_id = await exits.reserve_exit(
+        fingerprint="fp", event_id="e", intent_id="e1:AAPL:long",
+        channel="mystic", ticker="AAPL", scope="full", requested_qty=60,
+        reason="follow_sell_pending")
+    assert isinstance(exit_id, int) and exit_id > 0
+    # remaining_qty reserves the full requested qty while the sell is in-flight.
+    assert await exits.remaining_qty("e1:AAPL:long") == 40
+    # A pending reserve is NOT an actual sale: P&L/exposure totals must ignore it.
+    assert await exits.sold_qty_for_intent("e1:AAPL:long") == 0
+
+
+async def test_finalize_exit_corrects_to_actual_and_releases_over_reserve(db):
+    intents = TradeIntentStore(db)
+    exits = PositionExitStore(db)
+    await intents.insert(_intent("e1:AAPL:long", fill_qty=100))
+    exit_id = await exits.reserve_exit(
+        fingerprint="fp", event_id="e", intent_id="e1:AAPL:long",
+        channel="mystic", ticker="AAPL", scope="full", requested_qty=60,
+        reason="follow_sell_pending")
+    assert await exits.remaining_qty("e1:AAPL:long") == 40
+
+    # Only 40 actually filled -> the 20-share over-reserve is released.
+    await exits.finalize_exit(exit_id, sold_qty=40, sold_avg_price=99.0,
+                              broker_order_ref="IB-1", reason="follow_sell")
+    assert await exits.remaining_qty("e1:AAPL:long") == 60
+    assert await exits.sold_qty_for_intent("e1:AAPL:long") == 40
+
+
+async def test_finalize_exit_zero_releases_full_reserve(db):
+    # place_order-failure / zero-fill path: finalize sold_qty=0 frees the reserve.
+    intents = TradeIntentStore(db)
+    exits = PositionExitStore(db)
+    await intents.insert(_intent("e1:AAPL:long", fill_qty=100))
+    exit_id = await exits.reserve_exit(
+        fingerprint="fp", event_id="e", intent_id="e1:AAPL:long",
+        channel="mystic", ticker="AAPL", scope="full", requested_qty=100,
+        reason="follow_sell_pending")
+    assert await exits.remaining_qty("e1:AAPL:long") == 0
+    await exits.finalize_exit(exit_id, sold_qty=0, sold_avg_price=None,
+                              broker_order_ref=None, reason="follow_sell_place_failed")
+    assert await exits.remaining_qty("e1:AAPL:long") == 100
+    assert await exits.sold_qty_for_intent("e1:AAPL:long") == 0
