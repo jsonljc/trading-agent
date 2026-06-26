@@ -133,8 +133,10 @@ class PositionInvariantMachine(RuleBasedStateMachine):
         follower = SellFollower(self.gw, self.intents_store, self.exits,
                                 slippage_cap_pct=0.01, fill_timeout=5.0,
                                 is_rth=lambda: True)
-        self._run(follower.run(ctx))
-        self.gw.unavailable = False  # reset for later rules
+        try:
+            self._run(follower.run(ctx))
+        finally:
+            self.gw.unavailable = False  # reset for later rules (even on error)
 
         after = self._run(self._positive_exit_count(fingerprint))
         if after > before:
