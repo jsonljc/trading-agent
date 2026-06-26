@@ -9,6 +9,13 @@ from infra.ib.models import (
 )
 
 
+class _FakeTrade:
+    __slots__ = ("order",)
+
+    def __init__(self, order: PreparedOrder) -> None:
+        self.order = order
+
+
 class FakeGateway:
     """Deterministic broker stand-in. Serves the sell/trim path
     (qualify_equity/get_quote/place_order/wait_fill/cancel_order) and OrderSizer
@@ -28,7 +35,6 @@ class FakeGateway:
         # §3a hook: a one-shot async callback run INSIDE wait_fill, i.e. while a
         # sell order is placed-but-unrecorded. Used to inject a concurrent trim.
         self.on_wait_fill: Optional[Callable[[], Awaitable[None]]] = None
-        self._last: Optional[PreparedOrder] = None
 
     async def qualify_equity(self, ticker: str) -> BrokerContractRef:
         return BrokerContractRef(symbol=ticker, sec_type="STK", exchange="SMART",
@@ -48,14 +54,13 @@ class FakeGateway:
         if self.unavailable:
             raise IBGatewayUnavailable("fake: unavailable")
         self.placed.append(order)
-        self._last = order
-        return object()  # opaque trade handle
+        return _FakeTrade(order)
 
-    async def wait_fill(self, trade, timeout: float) -> FillResult:
+    async def wait_fill(self, trade: _FakeTrade, timeout: float) -> FillResult:
         if self.on_wait_fill is not None:
             cb, self.on_wait_fill = self.on_wait_fill, None  # one-shot
             await cb()
-        qty = self._last.quantity if self._last is not None else 0
+        qty = trade.order.quantity
         if self.fill_mode == "full":
             filled, status = qty, FillStatus.FILLED
         elif self.fill_mode == "partial":

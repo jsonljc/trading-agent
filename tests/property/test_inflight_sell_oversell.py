@@ -15,6 +15,9 @@ from tests.support.factories import make_filled_intent
 from tests.support.fake_gateway import FakeGateway
 
 
+@pytest.mark.xfail(strict=True, reason="FINDING: in-flight trader-sell is "
+    "unreserved in remaining_qty; a concurrent trim oversells (recorded 150 of "
+    "100). See spec 2026-06-26 §3a. Fix (reserve in-flight sells) pending sign-off.")
 @pytest.mark.asyncio
 async def test_inflight_sell_concurrent_trim_does_not_oversell():
     async with aiosqlite.connect(":memory:") as conn:

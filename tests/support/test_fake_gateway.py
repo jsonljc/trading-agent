@@ -14,8 +14,8 @@ def _order(qty):
 @pytest.mark.asyncio
 async def test_full_fill_returns_requested_qty():
     gw = FakeGateway()
-    await gw.place_order(None, _order(40), "coid")
-    fill = await gw.wait_fill(None, timeout=1.0)
+    trade = await gw.place_order(None, _order(40), "coid")
+    fill = await gw.wait_fill(trade, timeout=1.0)
     assert fill.status == FillStatus.FILLED
     assert fill.filled_qty == 40
     assert gw.placed[-1].quantity == 40
@@ -26,8 +26,8 @@ async def test_partial_fill_uses_fraction_and_is_not_filled_status():
     gw = FakeGateway()
     gw.fill_mode = "partial"
     gw.partial_fraction = 0.5
-    await gw.place_order(None, _order(40), "coid")
-    fill = await gw.wait_fill(None, timeout=1.0)
+    trade = await gw.place_order(None, _order(40), "coid")
+    fill = await gw.wait_fill(trade, timeout=1.0)
     assert fill.filled_qty == 20
     assert fill.status != FillStatus.FILLED
 
@@ -36,8 +36,8 @@ async def test_partial_fill_uses_fraction_and_is_not_filled_status():
 async def test_zero_fill():
     gw = FakeGateway()
     gw.fill_mode = "zero"
-    await gw.place_order(None, _order(40), "coid")
-    fill = await gw.wait_fill(None, timeout=1.0)
+    trade = await gw.place_order(None, _order(40), "coid")
+    fill = await gw.wait_fill(trade, timeout=1.0)
     assert fill.filled_qty == 0
     assert fill.avg_fill_price is None
 
@@ -65,10 +65,10 @@ async def test_on_wait_fill_hook_runs_once():
     async def hook():
         calls.append(1)
     gw.on_wait_fill = hook
-    await gw.place_order(None, _order(10), "coid")
-    await gw.wait_fill(None, timeout=1.0)
-    await gw.place_order(None, _order(10), "coid")
-    await gw.wait_fill(None, timeout=1.0)
+    trade1 = await gw.place_order(None, _order(10), "coid")
+    await gw.wait_fill(trade1, timeout=1.0)
+    trade2 = await gw.place_order(None, _order(10), "coid")
+    await gw.wait_fill(trade2, timeout=1.0)
     assert calls == [1]  # one-shot
 
 
