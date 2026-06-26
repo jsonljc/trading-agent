@@ -107,6 +107,14 @@ class TelegramDigest(Skill):
     _MISSED_ENTRY_REASON_PREFIXES = (
         "no_trader_profile:",  # TraderRouter: unknown author on a tracked channel
         "entry_outside_rth",   # RthEntryGuard: actionable entry fired off-session
+        # Capital/risk caps that drop a WHOLE actionable entry (the shares leg
+        # took nothing) — without these the operator is never told an entry they
+        # wanted was dropped for buying-power / exposure / price-cap reasons.
+        # Emitted by OrderSizer and ExposureGuard.
+        "insufficient_buying_power",
+        "exposure_cap_exceeded",
+        "above_max_equity_price",
+        "exposure_data_unavailable",
     )
 
     @classmethod

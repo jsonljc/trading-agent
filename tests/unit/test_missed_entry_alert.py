@@ -109,6 +109,21 @@ def test_unrelated_skip_reason_is_silent():
     assert not TelegramDigest.is_missed_entry_skip(ctx, "same_day_duplicate:AVEX")
 
 
+@pytest.mark.parametrize("reason", [
+    "insufficient_buying_power: alloc=5000.00 bp=10.0 < 1 unit at 300.00",
+    "exposure_cap_exceeded: open=90000 + order=20000 > cap=100000",
+    "above_max_equity_price: ref=600.00 > max=500.00",
+    "exposure_data_unavailable: broker circuit open",
+])
+def test_capital_cap_drops_are_missed_entries(reason):
+    # A whole actionable entry dropped for buying-power / aggregate-exposure /
+    # price-cap / unreadable-exposure reasons reaches on_skip (the shares leg
+    # took nothing). These were silent — surface them, or an entry you wanted is
+    # lost without notice. ExposureGuard/OrderSizer emit these reason prefixes.
+    ctx = make_ctx(bucket="HIGH", size_source="bucket_high")
+    assert TelegramDigest.is_missed_entry_skip(ctx, reason)
+
+
 # ---------------------------------------------------------------------------
 # missed_entry_reason — operator-facing detail
 # ---------------------------------------------------------------------------
