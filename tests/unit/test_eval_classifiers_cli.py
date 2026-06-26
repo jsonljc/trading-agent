@@ -20,6 +20,13 @@ TRADERS_DIR = str(_ROOT / "config" / "traders")
 SHIPPED_FIXTURES = str(_ROOT / "tests" / "fixtures" / "classifier_eval")
 SHIPPED_RESPONSES = str(
     _ROOT / "tests" / "fixtures" / "classifier_eval" / "responses_sample.jsonl")
+RECORDED_REAL = str(
+    _ROOT / "tests" / "fixtures" / "classifier_eval" / "recorded_real.jsonl")
+
+# Real measured accuracy was 100% pooled at last recording; the floor leaves
+# headroom for future re-records while still catching a real regression.
+ENTRY_ACCURACY_FLOOR = 0.80
+SELL_ACCURACY_FLOOR = 0.80
 
 
 def _write_tiny_fixtures(d: Path):
@@ -137,6 +144,31 @@ def test_shipped_sample_cache_matches_shipped_fixtures(capsys):
         assert report["accuracy"] == 1.0, (
             f"{report['classifier']} not 100% on oracle cache: "
             f"{report['accuracy']}")
+
+
+def test_recorded_real_cache_meets_accuracy_floor(capsys):
+    # REAL accuracy gate: replays the committed cache of ACTUAL live-LLM
+    # responses (built via `bin/eval_classifiers.py --record`, NOT an ideal
+    # oracle), so a model mistake shows up as a wrong prediction. Catches scorer
+    # regressions and cache/fixture drift (a new fixture with no recorded
+    # response KeyErrors). Re-record to measure current model drift.
+    rc = main([
+        "--fixtures-dir", SHIPPED_FIXTURES,
+        "--traders", TRADERS_DIR,
+        "--responses", RECORDED_REAL,
+        "--classifier", "both",
+        "--json",
+    ])
+    out = capsys.readouterr().out
+    assert rc == 0
+    data = json.loads(out)
+    by_name = {r["classifier"]: r for r in data["pooled"]}
+    entry = next(r for n, r in by_name.items() if n.startswith("entry"))
+    assert entry["accuracy"] >= ENTRY_ACCURACY_FLOOR, \
+        f"entry real accuracy {entry['accuracy']} below floor {ENTRY_ACCURACY_FLOOR}"
+    is_sell = next(r for n, r in by_name.items() if "is_sell" in n)
+    assert is_sell["accuracy"] >= SELL_ACCURACY_FLOOR, \
+        f"sell real accuracy {is_sell['accuracy']} below floor {SELL_ACCURACY_FLOOR}"
 
 
 def test_confusion_render_shows_out_of_label_predicted_key():

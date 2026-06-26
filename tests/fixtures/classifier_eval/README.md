@@ -62,8 +62,21 @@ It lets you run a deterministic eval immediately:
 bin/eval_classifiers.py --responses tests/fixtures/classifier_eval/responses_sample.jsonl
 ```
 
-To measure real model accuracy, run with `--live-llm` and record those raw
-responses into a new cache file.
+To measure REAL model accuracy, record the live responses into a committed
+cache and replay it:
+
+```
+bin/eval_classifiers.py --record tests/fixtures/classifier_eval/recorded_real.jsonl
+```
+
+`recorded_real.jsonl` is the committed cache of **actual live-LLM responses**
+(distinct from the ideal-oracle `responses_sample.jsonl`): a model mistake shows
+up as a wrong prediction, so replaying it measures true accuracy rather than the
+plumbing. At the last recording the live classifier scored **100% pooled**
+(entry/sell/scope). `test_recorded_real_cache_meets_accuracy_floor` gates it.
+Re-record after any prompt/model change to measure current drift; the
+`--record` / `--live-llm` paths require `ANTHROPIC_API_KEY` (loaded from `.env`,
+or they fail fast with a clear message).
 
 ## Authoring note
 
