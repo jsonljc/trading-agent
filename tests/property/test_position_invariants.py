@@ -17,7 +17,9 @@ from infra.storage.db import SCHEMA
 from infra.storage.position_exit_store import PositionExitStore
 from infra.storage.trade_intent_store import TradeIntentStore
 from infra.storage.trim_ladder_store import TrimLadderStore
+from agent.context import Context
 from agent.exit_ladder import fire_rung_if_crossed
+from skills.execution.sell_follower import SellFollower
 from tests.support.factories import make_filled_intent
 from tests.support.fake_gateway import FakeGateway
 
@@ -105,6 +107,54 @@ class PositionInvariantMachine(RuleBasedStateMachine):
         # `fired` is True only when a positive fill was recorded (full/partial>0).
         if fired:
             meta["recorded"] = True
+
+    @rule(intent=intents,
+          scope=st.sampled_from(["full", "partial"]),
+          fraction=st.floats(min_value=0.1, max_value=1.0),
+          fp_key=st.integers(min_value=0, max_value=3),  # small pool -> forces reposts
+          fill_mode=st.sampled_from(["full", "partial", "zero"]),
+          unavailable=st.booleans())
+    def follow_sell(self, intent, scope, fraction, fp_key, fill_mode, unavailable):
+        meta = self._rungs[intent]["_meta"]
+        channel, ticker = meta["channel"], meta["ticker"]
+        fingerprint = f"fp-{channel}-{ticker}-{fp_key}"
+        self._seq += 1
+        event_id = f"sell{self._seq}"
+
+        # positive-recording invocations for this fingerprint BEFORE the run
+        before = self._run(self._positive_exit_count(fingerprint))
+
+        self.gw.fill_mode = fill_mode
+        self.gw.unavailable = unavailable
+        ctx = Context(trace_id="t", event_id=event_id)
+        ctx.update({"action": "sell", "sell_ticker": ticker, "sell_scope": scope,
+                    "sell_fraction": fraction, "channel": channel,
+                    "message_fingerprint": fingerprint})
+        follower = SellFollower(self.gw, self.intents_store, self.exits,
+                                slippage_cap_pct=0.01, fill_timeout=5.0,
+                                is_rth=lambda: True)
+        self._run(follower.run(ctx))
+        self.gw.unavailable = False  # reset for later rules
+
+        after = self._run(self._positive_exit_count(fingerprint))
+        if after > before:
+            self._fp_positive[fingerprint] = self._fp_positive.get(fingerprint, 0) + 1
+
+    async def _positive_exit_count(self, fingerprint: str) -> int:
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM position_exits WHERE fingerprint=? AND sold_qty>0",
+            (fingerprint,),
+        ) as cur:
+            row = await cur.fetchone()
+        return int(row[0] or 0)
+
+    @invariant()
+    def claim_once_idempotency(self):
+        # INV-2: at most one SellFollower invocation records a positive-qty exit
+        # per fingerprint (zero-fill sold_qty=0 rows and released retries excepted).
+        for fingerprint, count in self._fp_positive.items():
+            assert count <= 1, (
+                f"{fingerprint}: {count} invocations recorded a positive sell")
 
     @invariant()
     def no_trim_double_fire(self):
