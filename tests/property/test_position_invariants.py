@@ -108,6 +108,22 @@ class PositionInvariantMachine(RuleBasedStateMachine):
         if fired:
             meta["recorded"] = True
 
+    @rule(intent=intents, rung=st.sampled_from([1, 2, 3]))
+    def crash_during_trim(self, intent, rung):
+        """Simulate a crash mid-fire: claim the rung (in-flight reserve persists),
+        then 'die' before recording. all_unfired() excludes it, so it is never
+        auto-re-fired; remaining_qty reserves it, so later sells cannot oversell."""
+        meta = self._rungs[intent].get(rung)
+        if meta is None or meta["recorded"]:
+            return
+        claimed = self._run(self.trims.claim_for_fire(
+            intent, rung, "2026-06-26T14:30:00+00:00"))
+        if claimed:
+            # Mark recorded=True in shadow so fire_trim won't try to fire it
+            # (a real restart leaves it stuck in-flight, not fireable).
+            meta["recorded"] = True
+            meta["stuck"] = True
+
     @rule(intent=intents,
           scope=st.sampled_from(["full", "partial"]),
           fraction=st.floats(min_value=0.1, max_value=1.0),
