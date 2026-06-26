@@ -29,38 +29,40 @@ async def follow_sell_position(
     trim ladder's partial-fill discipline: cancel any residual, record the real
     fill. Raises IBGatewayUnavailable to the caller (which owns the claim).
 
-    Reserves the full `qty` in the exit ledger BEFORE placing the order, so a
-    concurrent trim (or a second-fingerprint sell) reads remaining_qty net of
-    this in-flight sell and cannot oversize (spec §3a). The reserve is corrected
-    to the actual fill once known, symmetric to the trim ladder's in-flight
-    reserve."""
-    contract = await gw.qualify_equity(ticker)
-    price = await gw.get_quote(ticker)
-    limit = marketable_sell_limit(price, slippage_cap_pct)
-    order = PreparedOrder(action="SELL", quantity=qty, order_type="LMT",
-                          limit_price=limit, tif="DAY")
-    client_order_id = f"{intent_id}:exit:{fingerprint[:16]}"
-
-    # Reserve BEFORE placing: remaining_qty now excludes these shares for any
-    # concurrent reader (trim ladder / second sell) for the whole place->fill
-    # window.
+    Reserves the full `qty` in the exit ledger as its FIRST action — before any
+    broker round-trip (qualify/quote/place). The caller (SellFollower.run) sizes
+    this sell from a remaining_qty read with no intervening await before calling
+    here, so read->reserve is atomic, fully symmetric to the trim ladder's atomic
+    read->claim. A concurrent trim therefore reads remaining_qty net of this sell
+    for the ENTIRE prepare->place->fill window and cannot oversize (spec §3a).
+    The reserve is corrected to the actual fill once known."""
+    # Reserve FIRST (before qualify/quote/place) so the caller's remaining_qty
+    # read -> this reserve is atomic; a concurrent trim cannot slip into the
+    # prepare window and oversell.
     exit_id = await exits_store.reserve_exit(
         fingerprint=fingerprint, event_id=event_id, intent_id=intent_id,
         channel=channel, ticker=ticker, scope=scope, requested_qty=qty,
         reason="follow_sell_pending")
     try:
+        contract = await gw.qualify_equity(ticker)
+        price = await gw.get_quote(ticker)
+        limit = marketable_sell_limit(price, slippage_cap_pct)
+        order = PreparedOrder(action="SELL", quantity=qty, order_type="LMT",
+                              limit_price=limit, tif="DAY")
+        client_order_id = f"{intent_id}:exit:{fingerprint[:16]}"
         trade = await gw.place_order(contract, order, client_order_id)
     except IBGatewayUnavailable:
-        # Nothing was placed -> release the reserve so the caller's retry can
-        # re-size against the still-held shares; re-raise (the caller owns the
-        # claim / retry decision).
+        # Broker unreachable during prepare or place -> nothing was placed ->
+        # release the reserve so the caller's retry can re-size; re-raise (the
+        # caller owns the claim / retry decision). A non-IBGatewayUnavailable
+        # error is NOT caught: the reserve persists (stuck-until-reconciled),
+        # the safe direction, since the order's state is then unknown.
         await exits_store.finalize_exit(
             exit_id, sold_qty=0, sold_avg_price=None, broker_order_ref=None,
             reason="follow_sell_place_failed")
         raise
     # If wait_fill raises, the order may be live at IB: leave the reserve in
-    # place (stuck-until-reconciled), which is the safe direction -- it can
-    # never oversell.
+    # place (stuck-until-reconciled), the safe direction -- it can never oversell.
     fill = await gw.wait_fill(trade, timeout=fill_timeout)
 
     sold = int(fill.filled_qty) if fill.filled_qty and fill.filled_qty > 0 else 0
@@ -71,8 +73,6 @@ async def follow_sell_position(
         except Exception:
             logger.exception("sell residual cancel failed (order may rest at IB)")
 
-    # Finalize the reserve to the actual fill: releases any over-reserve
-    # (requested-sold); sold=0 releases the whole reserve.
     await exits_store.finalize_exit(
         exit_id, sold_qty=sold, sold_avg_price=fill.avg_fill_price,
         broker_order_ref=fill.broker_order_id, reason="follow_sell")
