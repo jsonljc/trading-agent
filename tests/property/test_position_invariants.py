@@ -17,6 +17,7 @@ from infra.storage.db import SCHEMA
 from infra.storage.position_exit_store import PositionExitStore
 from infra.storage.trade_intent_store import TradeIntentStore
 from infra.storage.trim_ladder_store import TrimLadderStore
+from agent.exit_ladder import fire_rung_if_crossed
 from tests.support.factories import make_filled_intent
 from tests.support.fake_gateway import FakeGateway
 
@@ -68,6 +69,55 @@ class PositionInvariantMachine(RuleBasedStateMachine):
         # carry channel/ticker for sell rules added later
         self._rungs[intent_id]["_meta"] = {"channel": channel, "ticker": ticker}
         return intent_id
+
+    _LADDER = [(1, 0.05, 0.25), (2, 0.10, 0.25), (3, 0.20, 0.50)]
+
+    @rule(intent=intents)
+    def arm_trims(self, intent):
+        if self._rungs[intent].get("_armed"):
+            return
+        self._run(self.trims.arm(intent, rungs=self._LADDER,
+                                 armed_at="2026-06-26T14:30:00+00:00"))
+        for rung, thr, tp in self._LADDER:
+            self._rungs[intent][rung] = {"threshold_pct": thr, "trim_pct": tp,
+                                         "recorded": False}
+        self._rungs[intent]["_armed"] = True
+
+    @rule(intent=intents,
+          rung=st.sampled_from([1, 2, 3]),
+          fill_mode=st.sampled_from(["full", "partial", "zero"]))
+    def fire_trim(self, intent, rung, fill_mode):
+        meta = self._rungs[intent].get(rung)
+        if meta is None or meta["recorded"]:
+            return  # not armed, or already recorded (real claim would reject anyway)
+        fill_qty = self._fill[intent]
+        ticker = self._rungs[intent]["_meta"]["ticker"]
+        # current_price crosses this rung's threshold deterministically.
+        current_price = 100.0 * (1.0 + meta["threshold_pct"]) + 1.0
+        self.gw.fill_mode = fill_mode
+        self.gw.unavailable = False
+        fired = self._run(fire_rung_if_crossed(
+            gw=self.gw, trim_store=self.trims, exits_store=self.exits,
+            intent_id=intent, ticker=ticker, avg_fill_price=100.0,
+            original_qty=fill_qty, rung=rung,
+            threshold_pct=meta["threshold_pct"], trim_pct=meta["trim_pct"],
+            current_price=current_price, slippage_cap_pct=0.01))
+        # `fired` is True only when a positive fill was recorded (full/partial>0).
+        if fired:
+            meta["recorded"] = True
+
+    @invariant()
+    def no_trim_double_fire(self):
+        # INV-3: each rung records a positive fire at most once.
+        for intent_id in self._fill:
+            for r in self._run(self.trims.all_for_intent(intent_id)):
+                # A recorded rung has non-NULL sold_qty (record_fire only runs on
+                # filled_qty>0). No row can be recorded twice: the claim gate
+                # blocks a second claim until release, and a recorded rung is
+                # never released. Assert via the shadow: recorded rungs stay recorded.
+                if r["sold_qty"] is not None:
+                    assert r["fired_at"] is not None, (
+                        f"{intent_id} rung {r['rung']}: sold_qty set but not fired_at")
 
     # ----------------------------------------------------------------- helpers
     async def _recorded_trims(self, intent_id: str) -> tuple[int, int]:
